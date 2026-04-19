@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = "8700173300:AAFguL_dEKOSUvOep_7iK1MIaiTaaFex2bg"
 ADMIN_USERNAME = "m16el1n0"
 ADMIN_SECRET   = "fleep_admin_2026"  # секрет для /admin/stats
 WEB_APP_URL    = "https://t.me/fleep_gift_bot/GAME"
