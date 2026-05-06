@@ -1606,55 +1606,41 @@ async def run():
     )
     app.add_handler(admin_conv)
 
-    logger.info("Бот запускается…")
-
-    # Railway URL для webhook — берём автоматически
+    # Webhook или polling — берём из переменных окружения
     RAILWAY_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
     base_url = WEBHOOK_URL or (f"https://{RAILWAY_URL}" if RAILWAY_URL else "")
-    
-    use_webhook = bool(base_url)
     webhook_path = f"/tg_webhook_{BOT_TOKEN[:8]}"
-    
-    if use_webhook:
-        # Webhook режим — запускаем через PTB встроенный webhook сервер
-        full_webhook_url = base_url.rstrip("/") + webhook_path
-        logger.info(f"Webhook режим: {full_webhook_url}")
-        
-        async with app:
-            await app.initialize()
-            await app.start()
-            await start_http(app)
-            logger.info("HTTP сервер запущен!")
-            
+
+    global _tg_app
+
+    async with app:
+        await app.initialize()
+        await app.start()
+
+        # Сразу устанавливаем глобальную ссылку — до HTTP сервера
+        _tg_app = app
+
+        # Запускаем HTTP сервер
+        await start_http(app)
+        logger.info("Бот запускается…")
+
+        if base_url:
+            # Webhook режим
+            full_webhook_url = base_url.rstrip("/") + webhook_path
             await app.bot.set_webhook(
                 url=full_webhook_url,
                 drop_pending_updates=True,
-                allowed_updates=["message", "callback_query", "pre_checkout_query"]
+                allowed_updates=Update.ALL_TYPES,
             )
-            logger.info("Webhook установлен!")
-            await asyncio.Event().wait()
-    else:
-        # Polling режим — сначала удаляем webhook через прямой HTTP запрос
-        # чтобы не зависеть от состояния старого процесса
-        async with aiohttp.ClientSession() as sess:
-            await sess.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
-                json={"drop_pending_updates": True}
-            )
-        logger.info("Webhook удалён, старт polling...")
-        
-        # Небольшая задержка чтобы Railway убил старый процесс
-        await asyncio.sleep(3)
-        
-        async with app:
-            await app.initialize()
-            await app.start()
-            await start_http(app)
-            logger.info("HTTP сервер запущен!")
+            logger.info(f"Webhook: {full_webhook_url}")
+        else:
+            # Polling режим — удаляем webhook и стартуем polling
+            await app.bot.delete_webhook(drop_pending_updates=True)
             await app.updater.start_polling(drop_pending_updates=True)
             logger.info("Polling режим активен!")
-            await asyncio.Event().wait()
+
+        await asyncio.Event().wait()
 
 
 def main():
