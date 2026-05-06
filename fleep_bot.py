@@ -28,6 +28,36 @@ PROMO_CODES = {
 MIN_STARS = 1
 MAX_STARS = 10000
 
+# ─── CRYPTOBOT (USDT через @CryptoBot) ───────────────────────────────────────
+CRYPTOBOT_TOKEN   = os.environ.get("CRYPTOBOT_TOKEN", "")   # выставить в переменных окружения
+CRYPTOBOT_API     = "https://pay.crypt.bot/api"               # mainnet
+COINS_PER_USDT    = 100 / 1.50                                # 100 коинов = 1.50 USDT → ~66.67 коинов/USDT
+
+# ─── РЕФЕРАЛЬНАЯ СИСТЕМА ──────────────────────────────────────────────────────
+REF_PERCENT_DEFAULT = 10   # % от проигрыша рефа начисляется пригласителю
+
+def get_ref_percent(user_id: int) -> int:
+    """Возвращает процент реферального бонуса для пользователя."""
+    return REF_PERCENT_DEFAULT
+
+def get_gifts_for_api() -> list:
+    """Возвращает список активных подарков в формате для фронтенда."""
+    rows = get_custom_gifts(active_only=True)
+    result = []
+    for row in rows:
+        gid, gname, gtype, gcost, gmin, gmax, gweight, gphoto = row
+        result.append({
+            "id": gid,
+            "name": gname,
+            "type": gtype,
+            "star_cost": gcost,
+            "min_coins": gmin,
+            "max_coins": gmax,
+            "weight": gweight,
+            "photo_id": gphoto,
+        })
+    return result
+
 # Railway/Render выставляют PORT сами, локально не используется
 PORT = int(os.environ.get("PORT", 0))
 
@@ -452,6 +482,43 @@ async def http_admin_panel(request: web.Request) -> web.Response:
         sign = "+" if ttype == "deposit" else "-"
         rows_html += f"<tr><td>{date}</td><td>{who}</td><td>{icon} {ttype}</td><td>{method}</td><td style='color:{'#4ade80' if ttype=='deposit' else '#f87171'}'>{sign}{amount} {currency}</td></tr>\n"
 
+    secret_val = request.rel_url.query.get("secret", "")
+    addbal_form = """
+<h2>&#128176; Начислить монеты пользователю</h2>
+<div class="addbal-form">
+  <input id="ab-user" type="text" placeholder="username или user_id" />
+  <input id="ab-amount" type="number" min="1" placeholder="Количество монет" />
+  <select id="ab-type">
+    <option value="gold">&#127937; Золото</option>
+    <option value="silver">&#9898; Серебро</option>
+    <option value="both">&#127937;+&#9898; Оба</option>
+  </select>
+  <button onclick="doAddBal()">Начислить</button>
+  <div id="ab-result" class="addbal-result"></div>
+</div>"""
+    script_block = f"""<script>
+async function doAddBal() {{
+  const user = document.getElementById('ab-user').value.trim();
+  const amount = parseInt(document.getElementById('ab-amount').value);
+  const type = document.getElementById('ab-type').value;
+  const res = document.getElementById('ab-result');
+  if (!user || !amount || amount < 1) {{ res.textContent='Заполни все поля'; res.className='addbal-result err'; res.style.display='block'; return; }}
+  try {{
+    const r = await fetch('/admin/addbal?secret={secret_val}', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{user,amount,type}})}});
+    const d = await r.json();
+    if (d.ok) {{ res.textContent='OK: ' + d.message; res.className='addbal-result ok'; }}
+    else {{ res.textContent='ERR: ' + (d.error||'Ошибка'); res.className='addbal-result err'; }}
+  }} catch(e) {{ res.textContent='ERR: ' + e.message; res.className='addbal-result err'; }}
+  res.style.display='block';
+}}
+</script>"""
+    css_extra = """
+  .addbal-form{background:#13131f;border:1.5px solid rgba(123,92,255,0.25);border-radius:14px;padding:20px;margin-bottom:28px}
+  .addbal-form input,.addbal-form select{background:#0d0d1a;border:1px solid #2a2a3a;color:#fff;padding:10px 14px;border-radius:10px;font-size:0.9rem;width:100%;box-sizing:border-box;margin-bottom:10px}
+  .addbal-form button{background:linear-gradient(135deg,#7b5cff,#a855f7);border:none;color:#fff;padding:12px 28px;border-radius:10px;font-size:0.95rem;font-weight:700;cursor:pointer;width:100%}
+  .addbal-result{margin-top:12px;padding:10px 14px;border-radius:10px;font-size:0.85rem;display:none}
+  .addbal-result.ok{background:rgba(74,222,128,0.15);color:#4ade80;border:1px solid rgba(74,222,128,0.3)}
+  .addbal-result.err{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.3)}"""
     html_page = f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -471,22 +538,25 @@ async def http_admin_panel(request: web.Request) -> web.Response:
   tr:last-child td{{border-bottom:none}}
   tr:hover td{{background:rgba(255,255,255,0.02)}}
   h2{{color:#7b5cff;font-size:1rem;margin:24px 0 12px;text-transform:uppercase;letter-spacing:2px}}
+  {css_extra}
 </style>
 </head>
 <body>
-<h1>🛠 FLEEP GIFT — Админ-панель</h1>
+<h1>FLEEP GIFT — Админ-панель</h1>
 <div class="cards">
   <div class="card"><div class="card-val">{total_users}</div><div class="card-lbl">Пользователей</div></div>
-  <div class="card"><div class="card-val" style="color:#fcd34d">{dep_total} 🟡</div><div class="card-lbl">Итого пополнено</div></div>
-  <div class="card"><div class="card-val" style="color:#fb923c">{dep_stars} 🟡</div><div class="card-lbl">Через Stars</div></div>
-  <div class="card"><div class="card-val" style="color:#34d399">{dep_usdt} 🟡</div><div class="card-lbl">Через USDT</div></div>
-  <div class="card"><div class="card-val" style="color:#f87171">{wd_total}</div><div class="card-lbl">Выводов (подарков)</div></div>
+  <div class="card"><div class="card-val" style="color:#fcd34d">{dep_total}</div><div class="card-lbl">Итого пополнено</div></div>
+  <div class="card"><div class="card-val" style="color:#fb923c">{dep_stars}</div><div class="card-lbl">Через Stars</div></div>
+  <div class="card"><div class="card-val" style="color:#34d399">{dep_usdt}</div><div class="card-lbl">Через USDT</div></div>
+  <div class="card"><div class="card-val" style="color:#f87171">{wd_total}</div><div class="card-lbl">Выводов</div></div>
 </div>
+{addbal_form}
 <h2>Последние 20 транзакций</h2>
 <table>
 <thead><tr><th>Дата</th><th>Пользователь</th><th>Тип</th><th>Метод</th><th>Сумма</th></tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
+{script_block}
 </body>
 </html>"""
     return web.Response(text=html_page, content_type="text/html")
@@ -683,7 +753,7 @@ async def http_create_usdt_invoice(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
     try:
-        import aiohttp as aiohttp_lib
+        aiohttp_lib = aiohttp
         data    = await request.json()
         user_id = int(data.get("user_id", 0))
         coins   = int(data.get("coins", 0))
@@ -742,6 +812,47 @@ async def http_cryptobot_webhook(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error(f"cryptobot_webhook error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
+
+async def http_admin_addbal(request: web.Request) -> web.Response:
+    """POST /admin/addbal — начислить монеты через веб-панель"""
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS)
+    secret = request.rel_url.query.get("secret", "")
+    if secret != ADMIN_SECRET:
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=403, headers=CORS)
+    try:
+        data    = await request.json()
+        user_q  = str(data.get("user", "")).strip()
+        amount  = int(data.get("amount", 0))
+        ctype   = data.get("type", "gold")   # gold | silver | both
+        if not user_q or amount < 1:
+            return web.json_response({"ok": False, "error": "bad params"}, headers=CORS)
+        row = find_user_by_username(user_q)
+        if not row:
+            return web.json_response({"ok": False, "error": f"Пользователь '{user_q}' не найден"}, headers=CORS)
+        uid, uname, fname = row
+        if ctype == "gold":
+            add_gold(uid, amount)
+            label = f"{amount} золота"
+            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "gold")
+        elif ctype == "silver":
+            add_silver(uid, amount)
+            label = f"{amount} серебра"
+            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "silver")
+        else:
+            add_gold(uid, amount)
+            add_silver(uid, amount)
+            label = f"{amount} золота + {amount} серебра"
+            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "gold")
+            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "silver")
+        gold, silver = get_balance(uid)
+        return web.json_response({
+            "ok": True,
+            "message": f"@{uname or uid}: +{label}. Баланс: {gold}G / {silver}S"
+        }, headers=CORS)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, headers=CORS)
+
 async def start_http(application):
     app_http = web.Application()
     app_http["bot"] = application.bot
@@ -755,6 +866,8 @@ async def start_http(application):
     app_http.router.add_post("/cryptobot_webhook",      http_cryptobot_webhook)
     app_http.router.add_options("/cryptobot_webhook",   http_cryptobot_webhook)
     app_http.router.add_get("/admin/stats",  http_admin_stats)
+    app_http.router.add_post("/admin/addbal",  http_admin_addbal)
+    app_http.router.add_options("/admin/addbal",  http_admin_addbal)
     app_http.router.add_get("/admin/panel",  http_admin_panel)
     app_http.router.add_get("/gifts",             http_get_gifts)
     app_http.router.add_options("/gifts",         http_get_gifts)
