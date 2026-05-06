@@ -96,6 +96,7 @@ GIFT_STAR_COSTS = {
 }
 _gift_catalog_cache = {}  # star_count -> gift_id
 _gift_catalog_loaded = False
+_tg_app = None  # глобальная ссылка на telegram app для webhook
 
 
 
@@ -408,6 +409,21 @@ async def http_balance(request: web.Request) -> web.Response:
 
 async def http_health(request: web.Request) -> web.Response:
     return web.Response(text="OK")
+
+
+async def http_telegram_webhook(request: web.Request) -> web.Response:
+    """Принимает обновления от Telegram (webhook режим)."""
+    global _tg_app
+    if not _tg_app:
+        return web.Response(status=503, text="Bot not ready")
+    try:
+        data = await request.json()
+        update = Update.de_json(data, _tg_app.bot)
+        await _tg_app.process_update(update)
+        return web.Response(text="ok")
+    except Exception as e:
+        logger.error(f"webhook error: {e}")
+        return web.Response(status=500, text="error")
 
 
 async def http_serve_static(request: web.Request) -> web.Response:
@@ -882,6 +898,9 @@ async def start_http(application):
     app_http = web.Application()
     app_http["bot"] = application.bot
     app_http.router.add_get("/",             http_health)
+    # Webhook роут — путь совпадает с тем что передаём в set_webhook
+    webhook_path = f"/tg_webhook_{BOT_TOKEN[:8]}"
+    app_http.router.add_post(webhook_path, http_telegram_webhook)
     app_http.router.add_get("/balance",      http_balance)
     app_http.router.add_options("/balance",  http_balance)
     app_http.router.add_post("/create_invoice",         http_create_invoice)
