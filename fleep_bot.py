@@ -58,8 +58,8 @@ def get_gifts_for_api() -> list:
         })
     return result
 
-# Railway/Render выставляют PORT сами, локально не используется
-PORT = int(os.environ.get("PORT", 0))
+# Railway/Render выставляют PORT сами; дефолт 8080
+PORT = int(os.environ.get("PORT", 8080))
 
 # ─── CONVERSATION STATES ──────────────────────────────────────────────────────
 (
@@ -399,6 +399,22 @@ async def http_balance(request: web.Request) -> web.Response:
 
 async def http_health(request: web.Request) -> web.Response:
     return web.Response(text="OK")
+
+
+async def http_serve_static(request: web.Request) -> web.Response:
+    """Раздаём index.html, script.js, style.css с того же сервера."""
+    filename = request.match_info.get("filename", "index.html")
+    # Безопасность: только разрешённые файлы
+    allowed = {"index.html": "text/html", "script.js": "application/javascript", "style.css": "text/css"}
+    if filename not in allowed:
+        return web.Response(status=404, text="Not found")
+    base = os.path.dirname(os.path.abspath(__file__))
+    filepath = os.path.join(base, filename)
+    if not os.path.exists(filepath):
+        return web.Response(status=404, text=f"{filename} not found on server")
+    with open(filepath, "r", encoding="utf-8") as f:
+        body = f.read()
+    return web.Response(text=body, content_type=allowed[filename], charset="utf-8")
 
 
 async def http_create_invoice(request: web.Request) -> web.Response:
@@ -857,6 +873,8 @@ async def start_http(application):
     app_http = web.Application()
     app_http["bot"] = application.bot
     app_http.router.add_get("/",             http_health)
+    app_http.router.add_get("/app",          http_serve_static)
+    app_http.router.add_get("/{filename}",   http_serve_static)
     app_http.router.add_get("/balance",      http_balance)
     app_http.router.add_options("/balance",  http_balance)
     app_http.router.add_post("/create_invoice",         http_create_invoice)
@@ -875,8 +893,9 @@ async def start_http(application):
     app_http.router.add_options("/withdraw_gift",     http_withdraw_gift)
     runner = web.AppRunner(app_http)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    logger.info(f"HTTP server on port {PORT}")
+    actual_port = PORT if PORT else 8080
+    await web.TCPSite(runner, "0.0.0.0", actual_port).start()
+    logger.info(f"HTTP server on port {actual_port}")
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -1563,8 +1582,7 @@ async def run():
         await app.initialize()
         await app.start()
         # Запускаем HTTP ПОСЛЕ инициализации бота — иначе create_invoice_link упадёт
-        if PORT:
-            await start_http(app)
+        await start_http(app)  # всегда запускаем HTTP
         logger.info("Бот и HTTP запущены!")
         await app.updater.start_polling()
         await asyncio.Event().wait()
