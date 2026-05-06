@@ -358,19 +358,22 @@ function showSection(section) {
 }
 
 function selectGame(game) {
-    // Скрываем список карточек, НО НЕ сам game-section (иначе дочерние элементы тоже скрываются)
-    const gameSection = document.getElementById('game-section');
-    const cardsList = gameSection ? gameSection.querySelector('.game-cards-list') : null;
-    const sectionTitle = gameSection ? gameSection.querySelector('.game-section-title') : null;
-    if (cardsList) cardsList.style.display = 'none';
-    if (sectionTitle) sectionTitle.style.display = 'none';
+    // Скрываем все секции навигации
+    ['game-section','profile-section','tasks-section','inventory-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.style.display = 'none'; el.classList.remove('active-section'); }
+    });
 
     // Скрываем все game-container
-    document.querySelectorAll('.game-container').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.game-container').forEach(el => {
+        el.style.display = 'none';
+        el.classList.remove('game-fullscreen');
+    });
 
     // Показываем нужную игру fullscreen
     const target = document.getElementById(game + '-game');
     if (target) {
+        target.style.removeProperty('display');
         target.style.display = 'block';
         target.classList.add('game-fullscreen');
     }
@@ -389,12 +392,14 @@ function backToGamesList() {
         el.classList.remove('game-fullscreen');
     });
 
-    // Показываем список карточек
-    const gameSection = document.getElementById('game-section');
-    const cardsList = gameSection ? gameSection.querySelector('.game-cards-list') : null;
-    const sectionTitle = gameSection ? gameSection.querySelector('.game-section-title') : null;
-    if (cardsList) cardsList.style.display = '';
-    if (sectionTitle) sectionTitle.style.display = '';
+    // Показываем game-section
+    const gs = document.getElementById('game-section');
+    if (gs) { gs.style.display = 'block'; gs.classList.add('active-section'); }
+
+    // Обновляем nav-кнопку
+    document.querySelectorAll('.nav-button').forEach(b => b.classList.remove('active-btn'));
+    const ng = document.getElementById('nav-game');
+    if (ng) ng.classList.add('active-btn');
 
     // Вернуть навигацию
     const nav = document.querySelector('.navigation');
@@ -2356,14 +2361,7 @@ function cancelUsdtInvoice() {
 }
 
 // ═══ ОПЛАТА ЧЕРЕЗ TELEGRAM STARS (нативный WebApp Invoice) ═══
-// BACKEND_URL — автоматически берём тот же хост что и у фронтенда
-// Если открыто локально (file://) — используем хардкодный Railway адрес
-const BACKEND_URL = (function() {
-    if (typeof window !== 'undefined' && window.location && window.location.protocol !== 'file:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-        return window.location.origin;
-    }
-    return 'https://web-production-42c21.up.railway.app';
-})();
+const BACKEND_URL = 'https://fleep-bot-production.up.railway.app';
 async function syncGoldFromServer() {
     try {
         const userId = tg?.initDataUnsafe?.user?.id;
