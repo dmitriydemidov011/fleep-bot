@@ -6,6 +6,7 @@ import asyncio
 import json
 import hmac
 import hashlib
+import aiohttp
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
@@ -140,6 +141,14 @@ def init_db():
             photo_id    TEXT,
             active      INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            inviter_id INTEGER NOT NULL,
+            invited_id INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
     conn.commit()
@@ -1581,10 +1590,11 @@ async def run():
     async with app:
         await app.initialize()
         await app.start()
-        # Запускаем HTTP ПОСЛЕ инициализации бота — иначе create_invoice_link упадёт
-        await start_http(app)  # всегда запускаем HTTP
+        # Запускаем HTTP ПОСЛЕ инициализации бота
+        await start_http(app)
         logger.info("Бот и HTTP запущены!")
-        await app.updater.start_polling()
+        # drop_pending_updates=True — сбрасываем старую очередь, убираем конфликт 409
+        await app.updater.start_polling(drop_pending_updates=True)
         await asyncio.Event().wait()
 
 
