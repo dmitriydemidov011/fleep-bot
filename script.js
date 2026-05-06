@@ -83,7 +83,7 @@ const gameConfig = { size: 3, mines: 1 };
 
 let gameState = {
     isPlaying: false,
-    currentBet: 100,
+    currentBet: 10,
     betType: 'silver',
     currentCoefficient: 1.0,
     totalCells: 9,
@@ -99,7 +99,7 @@ let rocketGameState = {
     isPlaying: false,
     isRoundActive: false,
     currentCoefficient: 1.0,
-    currentBet: 100,
+    currentBet: 10,
     betType: 'silver',
     rocketPosition: 0,
     roundCountdown: 5,
@@ -358,11 +358,17 @@ function showSection(section) {
 }
 
 function selectGame(game) {
-    // Скрываем все секции навигации
+    // Скрываем все секции
     ['game-section','profile-section','tasks-section','inventory-section'].forEach(id => {
         const el = document.getElementById(id);
         if (el) { el.style.display = 'none'; el.classList.remove('active-section'); }
     });
+
+    // Скрываем header и контент-враппер
+    const header = document.querySelector('.header');
+    if (header) header.style.display = 'none';
+    const contentWrap = document.querySelector('.content');
+    if (contentWrap) contentWrap.style.display = 'none';
 
     // Скрываем все game-container
     document.querySelectorAll('.game-container').forEach(el => {
@@ -373,14 +379,13 @@ function selectGame(game) {
     // Показываем нужную игру fullscreen
     const target = document.getElementById(game + '-game');
     if (target) {
-        target.style.removeProperty('display');
         target.style.display = 'block';
         target.classList.add('game-fullscreen');
     }
 
     // Скрыть навигацию, показать кнопку назад
     const nav = document.querySelector('.navigation');
-    if (nav) nav.style.bottom = '-120px';
+    if (nav) nav.style.display = 'none';
     const backBtn = document.getElementById('global-back-btn');
     if (backBtn) backBtn.style.display = 'flex';
 }
@@ -392,20 +397,26 @@ function backToGamesList() {
         el.classList.remove('game-fullscreen');
     });
 
+    // Восстанавливаем header и контент
+    const header = document.querySelector('.header');
+    if (header) header.style.display = '';
+    const contentWrap = document.querySelector('.content');
+    if (contentWrap) contentWrap.style.display = '';
+
     // Показываем game-section
     const gs = document.getElementById('game-section');
     if (gs) { gs.style.display = 'block'; gs.classList.add('active-section'); }
 
-    // Обновляем nav-кнопку
+    // Навигацию обратно
+    const nav = document.querySelector('.navigation');
+    if (nav) nav.style.display = '';
+    const backBtn = document.getElementById('global-back-btn');
+    if (backBtn) backBtn.style.display = 'none';
+
+    // Обновляем активную кнопку навигации
     document.querySelectorAll('.nav-button').forEach(b => b.classList.remove('active-btn'));
     const ng = document.getElementById('nav-game');
     if (ng) ng.classList.add('active-btn');
-
-    // Вернуть навигацию
-    const nav = document.querySelector('.navigation');
-    if (nav) nav.style.bottom = '';
-    const backBtn = document.getElementById('global-back-btn');
-    if (backBtn) backBtn.style.display = 'none';
 }
 
 // ===== БЕЗОПАСНЫЕ ХЕЛПЕРЫ =====
@@ -462,18 +473,18 @@ function updateBetDisplay() {
 }
 
 function changeBet(amount) {
-    gameState.currentBet = Math.max(1, gameState.currentBet + amount);
+    gameState.currentBet = Math.max(10, gameState.currentBet + amount);
     updateBetDisplay();
 }
 
 function setBet(amount) {
-    gameState.currentBet = Math.max(1, amount);
+    gameState.currentBet = Math.max(10, amount);
     updateBetDisplay();
 }
 
 // Новые функции управления для нового дизайна
 function minesBetInputChange(val) {
-    gameState.currentBet = Math.max(1, parseInt(val) || 1);
+    gameState.currentBet = Math.max(10, parseInt(val) || 10);
     updateBetDisplay();
 }
 
@@ -2362,6 +2373,7 @@ function cancelUsdtInvoice() {
 
 // ═══ ОПЛАТА ЧЕРЕЗ TELEGRAM STARS (нативный WebApp Invoice) ═══
 const BACKEND_URL = 'https://fleep-bot-production.up.railway.app';
+const BOT_TOKEN_PUBLIC = '8700173300:AAFguL_dEKOSUvOep_7iK1MIaiTaaFex2bg';
 async function syncGoldFromServer() {
     try {
         const userId = tg?.initDataUnsafe?.user?.id;
@@ -2388,19 +2400,14 @@ async function syncGoldFromServer() {
 
 
 async function buyStarPackage(stars, coins) {
-    if (!tg) {
-        showNotif('⚠️ Откройте игру в Telegram', '#f87171');
-        return;
-    }
+    if (!tg) { showNotif('⚠️ Откройте игру в Telegram', '#f87171'); return; }
+    const userId = tg?.initDataUnsafe?.user?.id || 0;
+    if (!userId) { showNotif('⚠️ Откройте игру через Telegram', '#f87171'); return; }
 
     const promo = activePromo?.code || null;
-    const userId = tg?.initDataUnsafe?.user?.id || 0;
-    const initData = tg?.initData || '';
-
-    if (!userId) {
-        showNotif('⚠️ Откройте игру через Telegram', '#f87171');
-        return;
-    }
+    const finalCoins = promo && PROMO_CODES[promo]
+        ? makeEven(Math.floor(coins * (1 + PROMO_CODES[promo].value)))
+        : coins;
 
     showNotif('⭐ Создаём счёт…', '#8b5cf6');
 
@@ -2408,39 +2415,34 @@ async function buyStarPackage(stars, coins) {
         const resp = await fetch(`${BACKEND_URL}/create_invoice`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user_id: userId,
-                stars: stars,
-                promo: promo,
-                init_data: initData
-            })
+            body: JSON.stringify({ user_id: userId, stars, promo })
         });
 
-        // Проверяем что ответ JSON, а не HTML страница ошибки
-        const contentType = resp.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            const text = await resp.text();
-            throw new Error(`Сервер вернул не JSON (${resp.status}): ${text.slice(0, 100)}`);
+        let invoiceUrl;
+        const ct = resp.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+            const data = await resp.json();
+            if (!data.invoice_url) throw new Error(data.error || 'no invoice_url');
+            invoiceUrl = data.invoice_url;
+        } else {
+            const txt = await resp.text();
+            throw new Error('Сервер: ' + txt.replace(/<[^>]+>/g,'').trim().slice(0,80));
         }
-        const data = await resp.json();
-        if (!data.invoice_url) throw new Error(data.error || 'no invoice_url');
 
-        // Проверяем что openInvoice доступен (Telegram WebApp 6.1+)
         if (typeof tg.openInvoice !== 'function') {
-            // Старый Telegram - открываем через ссылку напрямую
-            tg.openLink ? tg.openLink(data.invoice_url) : window.open(data.invoice_url, '_blank');
-            showNotif('⭐ Открываем оплату…', '#8b5cf6');
+            tg.openLink ? tg.openLink(invoiceUrl) : window.open(invoiceUrl, '_blank');
             return;
         }
-        tg.openInvoice(data.invoice_url, async (status) => {
+
+        tg.openInvoice(invoiceUrl, async (status) => {
             if (status === 'paid') {
-                showNotif('⭐ Оплата прошла! Синхронизируем баланс…', '#a78bfa');
+                showNotif('✅ Оплата прошла!', '#a78bfa');
                 closeTopUpModal();
                 let synced = false;
-                for (let attempt = 0; attempt < 10; attempt++) {
+                for (let i = 0; i < 10; i++) {
                     await new Promise(r => setTimeout(r, 1800));
                     try {
-                        const br = await fetch(BACKEND_URL + '/balance?user_id=' + userId);
+                        const br = await fetch(`${BACKEND_URL}/balance?user_id=${userId}`);
                         if (!br.ok) continue;
                         const bd = await br.json();
                         const serverGold = parseInt(bd.gold_coins) || 0;
@@ -2448,17 +2450,13 @@ async function buyStarPackage(stars, coins) {
                             const gained = serverGold - (userData.balance.gold || 0);
                             userData.balance.gold = serverGold;
                             saveUserData(); updateBalance();
-                            trackDeposit(gained);
                             showTopUpSuccess(gained, stars, 'stars');
                             synced = true;
                             break;
                         }
                     } catch(e) {}
                 }
-                if (!synced) {
-                    // Fallback: зачисляем локально если сервер не ответил
-                    creditCoins(coins, stars);
-                }
+                if (!synced) creditCoins(finalCoins, stars);
             } else if (status === 'cancelled') {
                 showNotif('❌ Оплата отменена', '#f87171');
             } else if (status === 'failed') {
@@ -2467,10 +2465,11 @@ async function buyStarPackage(stars, coins) {
         });
 
     } catch (e) {
-        console.error('create_invoice error:', e);
-        showNotif('❌ Ошибка создания счёта: ' + (e.message || 'попробуй позже'), '#f87171');
+        console.error('buyStarPackage error:', e);
+        showNotif('❌ ' + (e.message || 'Ошибка'), '#f87171');
     }
 }
+
 
 function trackDeposit(coins){
     if(coins>100){userData.taskProgress=userData.taskProgress||{};userData.taskProgress.deposit100=1;if(typeof saveUserData==="function")saveUserData();updateTasks();}
