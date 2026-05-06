@@ -6,7 +6,6 @@ import asyncio
 import json
 import hmac
 import hashlib
-import aiohttp
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
@@ -29,38 +28,8 @@ PROMO_CODES = {
 MIN_STARS = 1
 MAX_STARS = 10000
 
-# ─── CRYPTOBOT (USDT через @CryptoBot) ───────────────────────────────────────
-CRYPTOBOT_TOKEN   = os.environ.get("CRYPTOBOT_TOKEN", "")   # выставить в переменных окружения
-CRYPTOBOT_API     = "https://pay.crypt.bot/api"               # mainnet
-COINS_PER_USDT    = 100 / 1.50                                # 100 коинов = 1.50 USDT → ~66.67 коинов/USDT
-
-# ─── РЕФЕРАЛЬНАЯ СИСТЕМА ──────────────────────────────────────────────────────
-REF_PERCENT_DEFAULT = 10   # % от проигрыша рефа начисляется пригласителю
-
-def get_ref_percent(user_id: int) -> int:
-    """Возвращает процент реферального бонуса для пользователя."""
-    return REF_PERCENT_DEFAULT
-
-def get_gifts_for_api() -> list:
-    """Возвращает список активных подарков в формате для фронтенда."""
-    rows = get_custom_gifts(active_only=True)
-    result = []
-    for row in rows:
-        gid, gname, gtype, gcost, gmin, gmax, gweight, gphoto = row
-        result.append({
-            "id": gid,
-            "name": gname,
-            "type": gtype,
-            "star_cost": gcost,
-            "min_coins": gmin,
-            "max_coins": gmax,
-            "weight": gweight,
-            "photo_id": gphoto,
-        })
-    return result
-
-# Railway/Render выставляют PORT сами; дефолт 8080
-PORT = int(os.environ.get("PORT", 8080))
+# Railway/Render выставляют PORT сами, локально не используется
+PORT = int(os.environ.get("PORT", 0))
 
 # ─── CONVERSATION STATES ──────────────────────────────────────────────────────
 (
@@ -79,25 +48,6 @@ PORT = int(os.environ.get("PORT", 8080))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Стоимость подарков в звёздах (для автовывода через sendGift)
-GIFT_STAR_COSTS = {
-    "heart":     15,
-    "bear":      15,
-    "rose":      25,
-    "gift":      25,
-    "cake":      50,
-    "bouquet":   50,
-    "rocket":    50,
-    "cup":       100,
-    "ring":      100,
-    "diamond":   250,
-    "champagne": 50,
-}
-_gift_catalog_cache = {}  # star_count -> gift_id
-_gift_catalog_loaded = False
-_tg_app = None  # глобальная ссылка на telegram app для webhook
-
 
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
@@ -142,14 +92,6 @@ def init_db():
             photo_id    TEXT,
             active      INTEGER NOT NULL DEFAULT 1,
             created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS referrals (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            inviter_id INTEGER NOT NULL,
-            invited_id INTEGER NOT NULL UNIQUE,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
     conn.commit()
@@ -411,37 +353,6 @@ async def http_health(request: web.Request) -> web.Response:
     return web.Response(text="OK")
 
 
-async def http_telegram_webhook(request: web.Request) -> web.Response:
-    """Принимает обновления от Telegram (webhook режим)."""
-    global _tg_app
-    if not _tg_app:
-        return web.Response(status=503, text="Bot not ready")
-    try:
-        data = await request.json()
-        update = Update.de_json(data, _tg_app.bot)
-        await _tg_app.process_update(update)
-        return web.Response(text="ok")
-    except Exception as e:
-        logger.error(f"webhook error: {e}")
-        return web.Response(status=500, text="error")
-
-
-async def http_serve_static(request: web.Request) -> web.Response:
-    """Раздаём index.html, script.js, style.css с того же сервера."""
-    filename = request.match_info.get("filename", "index.html")
-    # Безопасность: только разрешённые файлы
-    allowed = {"index.html": "text/html", "script.js": "application/javascript", "style.css": "text/css"}
-    if filename not in allowed:
-        return web.Response(status=404, text="Not found")
-    base = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(base, filename)
-    if not os.path.exists(filepath):
-        return web.Response(status=404, text=f"{filename} not found on server")
-    with open(filepath, "r", encoding="utf-8") as f:
-        body = f.read()
-    return web.Response(text=body, content_type=allowed[filename], charset="utf-8")
-
-
 async def http_create_invoice(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
@@ -523,43 +434,6 @@ async def http_admin_panel(request: web.Request) -> web.Response:
         sign = "+" if ttype == "deposit" else "-"
         rows_html += f"<tr><td>{date}</td><td>{who}</td><td>{icon} {ttype}</td><td>{method}</td><td style='color:{'#4ade80' if ttype=='deposit' else '#f87171'}'>{sign}{amount} {currency}</td></tr>\n"
 
-    secret_val = request.rel_url.query.get("secret", "")
-    addbal_form = """
-<h2>&#128176; Начислить монеты пользователю</h2>
-<div class="addbal-form">
-  <input id="ab-user" type="text" placeholder="username или user_id" />
-  <input id="ab-amount" type="number" min="1" placeholder="Количество монет" />
-  <select id="ab-type">
-    <option value="gold">&#127937; Золото</option>
-    <option value="silver">&#9898; Серебро</option>
-    <option value="both">&#127937;+&#9898; Оба</option>
-  </select>
-  <button onclick="doAddBal()">Начислить</button>
-  <div id="ab-result" class="addbal-result"></div>
-</div>"""
-    script_block = f"""<script>
-async function doAddBal() {{
-  const user = document.getElementById('ab-user').value.trim();
-  const amount = parseInt(document.getElementById('ab-amount').value);
-  const type = document.getElementById('ab-type').value;
-  const res = document.getElementById('ab-result');
-  if (!user || !amount || amount < 1) {{ res.textContent='Заполни все поля'; res.className='addbal-result err'; res.style.display='block'; return; }}
-  try {{
-    const r = await fetch('/admin/addbal?secret={secret_val}', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{user,amount,type}})}});
-    const d = await r.json();
-    if (d.ok) {{ res.textContent='OK: ' + d.message; res.className='addbal-result ok'; }}
-    else {{ res.textContent='ERR: ' + (d.error||'Ошибка'); res.className='addbal-result err'; }}
-  }} catch(e) {{ res.textContent='ERR: ' + e.message; res.className='addbal-result err'; }}
-  res.style.display='block';
-}}
-</script>"""
-    css_extra = """
-  .addbal-form{background:#13131f;border:1.5px solid rgba(123,92,255,0.25);border-radius:14px;padding:20px;margin-bottom:28px}
-  .addbal-form input,.addbal-form select{background:#0d0d1a;border:1px solid #2a2a3a;color:#fff;padding:10px 14px;border-radius:10px;font-size:0.9rem;width:100%;box-sizing:border-box;margin-bottom:10px}
-  .addbal-form button{background:linear-gradient(135deg,#7b5cff,#a855f7);border:none;color:#fff;padding:12px 28px;border-radius:10px;font-size:0.95rem;font-weight:700;cursor:pointer;width:100%}
-  .addbal-result{margin-top:12px;padding:10px 14px;border-radius:10px;font-size:0.85rem;display:none}
-  .addbal-result.ok{background:rgba(74,222,128,0.15);color:#4ade80;border:1px solid rgba(74,222,128,0.3)}
-  .addbal-result.err{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.3)}"""
     html_page = f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -579,25 +453,22 @@ async function doAddBal() {{
   tr:last-child td{{border-bottom:none}}
   tr:hover td{{background:rgba(255,255,255,0.02)}}
   h2{{color:#7b5cff;font-size:1rem;margin:24px 0 12px;text-transform:uppercase;letter-spacing:2px}}
-  {css_extra}
 </style>
 </head>
 <body>
-<h1>FLEEP GIFT — Админ-панель</h1>
+<h1>🛠 FLEEP GIFT — Админ-панель</h1>
 <div class="cards">
   <div class="card"><div class="card-val">{total_users}</div><div class="card-lbl">Пользователей</div></div>
-  <div class="card"><div class="card-val" style="color:#fcd34d">{dep_total}</div><div class="card-lbl">Итого пополнено</div></div>
-  <div class="card"><div class="card-val" style="color:#fb923c">{dep_stars}</div><div class="card-lbl">Через Stars</div></div>
-  <div class="card"><div class="card-val" style="color:#34d399">{dep_usdt}</div><div class="card-lbl">Через USDT</div></div>
-  <div class="card"><div class="card-val" style="color:#f87171">{wd_total}</div><div class="card-lbl">Выводов</div></div>
+  <div class="card"><div class="card-val" style="color:#fcd34d">{dep_total} 🟡</div><div class="card-lbl">Итого пополнено</div></div>
+  <div class="card"><div class="card-val" style="color:#fb923c">{dep_stars} 🟡</div><div class="card-lbl">Через Stars</div></div>
+  <div class="card"><div class="card-val" style="color:#34d399">{dep_usdt} 🟡</div><div class="card-lbl">Через USDT</div></div>
+  <div class="card"><div class="card-val" style="color:#f87171">{wd_total}</div><div class="card-lbl">Выводов (подарков)</div></div>
 </div>
-{addbal_form}
 <h2>Последние 20 транзакций</h2>
 <table>
 <thead><tr><th>Дата</th><th>Пользователь</th><th>Тип</th><th>Метод</th><th>Сумма</th></tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
-{script_block}
 </body>
 </html>"""
     return web.Response(text=html_page, content_type="text/html")
@@ -609,105 +480,8 @@ async def http_get_gifts(request: web.Request) -> web.Response:
     return web.json_response({"gifts": gifts}, headers=CORS)
 
 
-
-async def load_gift_catalog_once():
-    """Загружает каталог подарков Telegram один раз."""
-    global _gift_catalog_cache, _gift_catalog_loaded
-    if _gift_catalog_loaded:
-        return _gift_catalog_cache
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/getAvailableGifts"
-            ) as r:
-                data = await r.json()
-        if data.get("ok"):
-            for g in data["result"].get("gifts", []):
-                stars = g.get("star_count", 0)
-                gid   = g.get("id", "")
-                if stars not in _gift_catalog_cache:
-                    _gift_catalog_cache[stars] = gid
-            _gift_catalog_loaded = True
-            logger.info(f"Gift catalog: {len(_gift_catalog_cache)} price points")
-    except Exception as e:
-        logger.error(f"load_gift_catalog_once: {e}")
-    return _gift_catalog_cache
-
-
-async def auto_send_gift(user_id: int, gift_type: str) -> tuple[bool, str]:
-    """Отправляет Telegram-подарок пользователю через sendGift."""
-    stars = GIFT_STAR_COSTS.get(gift_type)
-    if not stars:
-        return False, f"Тип {gift_type} не поддерживает автовывод"
-
-    catalog = await load_gift_catalog_once()
-    gift_id = catalog.get(stars)
-
-    if not gift_id:
-        # Ищем ближайшую цену
-        available = sorted(catalog.keys())
-        closest = min(available, key=lambda x: abs(x - stars)) if available else None
-        if closest and abs(closest - stars) <= 15:
-            gift_id = catalog[closest]
-        else:
-            return False, f"Нет подарка за {stars}⭐ в каталоге"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendGift",
-                json={"user_id": user_id, "gift_id": gift_id}
-            ) as r:
-                result = await r.json()
-        if result.get("ok"):
-            return True, gift_id
-        else:
-            return False, result.get("description", "Telegram error")
-    except Exception as e:
-        return False, str(e)
-
-
-
-def pay_ref_bonus_loss(player_id: int, loss_amount: int) -> int:
-    """Начисляет реф бонус пригласителю от каждого проигрыша игрока."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        row = conn.execute(
-            "SELECT inviter_id FROM referrals WHERE invited_id=?", (player_id,)
-        ).fetchone()
-        conn.close()
-        if not row:
-            return 0
-        inviter_id = row[0]
-        percent = get_ref_percent(inviter_id) if callable(get_ref_percent) else 10
-        bonus = max(1, round(loss_amount * percent / 100))
-        add_gold(inviter_id, bonus)
-        record_transaction(inviter_id, "", "", "referral_bonus", "loss_ref", bonus, "gold")
-        logger.info(f"Ref loss bonus: inviter={inviter_id} from={player_id} bonus={bonus}")
-        return bonus
-    except Exception as e:
-        logger.error(f"pay_ref_bonus_loss: {e}")
-        return 0
-
-
-async def http_report_loss(request: web.Request) -> web.Response:
-    """POST /report_loss — реф бонус от проигрыша."""
-    if request.method == "OPTIONS":
-        return web.Response(status=204, headers=CORS)
-    try:
-        body    = await request.json()
-        user_id = int(body.get("user_id", 0))
-        amount  = int(body.get("amount", 0))
-        if not user_id or amount <= 0:
-            return web.json_response({"ok": False}, headers=CORS)
-        bonus = pay_ref_bonus_loss(user_id, amount)
-        return web.json_response({"ok": True, "bonus": bonus}, headers=CORS)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": str(e)}, headers=CORS)
-
-
 async def http_withdraw_gift(request: web.Request) -> web.Response:
-    """Вывод подарка — автоматически через sendGift или вручную."""
+    """Запрос на вывод подарка из инвентаря"""
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
     try:
@@ -722,79 +496,54 @@ async def http_withdraw_gift(request: web.Request) -> web.Response:
         if not user_id:
             return web.json_response({"error": "no user_id"}, status=400, headers=CORS)
 
-        bot_obj = request.app.get("bot")
-        who = f"@{username}" if username else str(user_id)
-
         # Записываем транзакцию
         record_transaction(user_id, username, "", "withdrawal", "gift", gift_value, "gift")
 
-        # Пробуем автовывод через sendGift
-        success, info = await auto_send_gift(user_id, gift_type)
+        # Уведомляем администратора
+        bot = request.app.get("bot")
+        if bot:
+            try:
+                from telegram import Bot
+                who = f"@{username}" if username else str(user_id)
+                msg = (
+                    f"📤 *Запрос на вывод подарка*\n\n"
+                    f"👤 Пользователь: {who} (id: `{user_id}`)\n"
+                    f"🎁 Подарок: {gift_emoji} {gift_name}\n"
+                    f"💰 Стоимость: *{gift_value} F*\n\n"
+                    f"Подарок нужно отправить в Telegram!"
+                )
+                # Найдём username администратора через переменную
+                conn = __import__("sqlite3").connect(DB_PATH)
+                admin_row = conn.execute(
+                    "SELECT user_id FROM users WHERE username=?", (ADMIN_USERNAME,)
+                ).fetchone()
+                conn.close()
+                if admin_row:
+                    await bot.send_message(admin_row[0], msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"notify admin error: {e}")
 
-        if success:
-            # Уведомляем пользователя
-            if bot_obj:
-                try:
-                    await bot_obj.send_message(
-                        user_id,
-                        f"✅ Подарок {gift_emoji} *{gift_name}* отправлен!\n"
-                        f"Проверь входящие подарки в Telegram.",
-                        parse_mode="Markdown"
-                    )
-                except Exception: pass
-            # Уведомляем админа
-            if bot_obj:
-                try:
-                    admin_row = sqlite3.connect(DB_PATH).execute(
-                        "SELECT user_id FROM users WHERE username=?", (ADMIN_USERNAME,)
-                    ).fetchone()
-                    if admin_row:
-                        await bot_obj.send_message(
-                            admin_row[0],
-                            f"✅ *Автовывод подарка*\n"
-                            f"👤 {who}\n🎁 {gift_emoji} {gift_name}\n🆔 `{info}`",
-                            parse_mode="Markdown"
-                        )
-                except Exception: pass
-            logger.info(f"Gift auto-sent: user={user_id} type={gift_type} id={info}")
-            return web.json_response({"ok": True, "auto_sent": True}, headers=CORS)
-
-        else:
-            # Автовывод не удался — уведомляем админа вручную
-            logger.warning(f"Gift auto-send FAILED user={user_id}: {info}")
-            if bot_obj:
-                try:
-                    admin_row = sqlite3.connect(DB_PATH).execute(
-                        "SELECT user_id FROM users WHERE username=?", (ADMIN_USERNAME,)
-                    ).fetchone()
-                    if admin_row:
-                        await bot_obj.send_message(
-                            admin_row[0],
-                            f"⚠️ *Ручной вывод подарка*\n"
-                            f"👤 {who} (id: `{user_id}`)\n"
-                            f"🎁 {gift_emoji} {gift_name}\n"
-                            f"❌ {info}\n\nОтправь подарок вручную!",
-                            parse_mode="Markdown"
-                        )
-                    await bot_obj.send_message(
-                        user_id,
-                        f"⏳ Запрос на вывод {gift_emoji} *{gift_name}* принят!\n"
-                        f"Подарок отправят вручную в ближайшее время.",
-                        parse_mode="Markdown"
-                    )
-                except Exception: pass
-            return web.json_response({"ok": True, "auto_sent": False, "reason": info}, headers=CORS)
-
+        logger.info(f"Withdrawal request: user={user_id} gift={gift_name} value={gift_value}")
+        return web.json_response({"ok": True}, headers=CORS)
     except Exception as e:
         logger.error(f"withdraw_gift error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
+
+
+
+
+
+# ─── CRYPTOBOT WEBHOOK ────────────────────────────────────────────────────────
+CRYPTOBOT_TOKEN = "542304:AAyfVT4SyISn08Y0GY8WcJPpDGP8TqZXUW3"
+CRYPTOBOT_API   = "https://pay.crypt.bot/api"
+COINS_PER_USDT  = 66.67  # 100 coins = 1.5 USDT
 
 
 async def http_create_usdt_invoice(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
     try:
-        aiohttp_lib = aiohttp
+        import aiohttp as aiohttp_lib
         data    = await request.json()
         user_id = int(data.get("user_id", 0))
         coins   = int(data.get("coins", 0))
@@ -853,67 +602,10 @@ async def http_cryptobot_webhook(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error(f"cryptobot_webhook error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
-
-async def http_admin_addbal(request: web.Request) -> web.Response:
-    """POST /admin/addbal — начислить монеты через веб-панель"""
-    if request.method == "OPTIONS":
-        return web.Response(status=204, headers=CORS)
-    secret = request.rel_url.query.get("secret", "")
-    if secret != ADMIN_SECRET:
-        return web.json_response({"ok": False, "error": "unauthorized"}, status=403, headers=CORS)
-    try:
-        data    = await request.json()
-        user_q  = str(data.get("user", "")).strip()
-        amount  = int(data.get("amount", 0))
-        ctype   = data.get("type", "gold")   # gold | silver | both
-        if not user_q or amount < 1:
-            return web.json_response({"ok": False, "error": "bad params"}, headers=CORS)
-        row = find_user_by_username(user_q)
-        if not row:
-            return web.json_response({"ok": False, "error": f"Пользователь '{user_q}' не найден"}, headers=CORS)
-        uid, uname, fname = row
-        if ctype == "gold":
-            add_gold(uid, amount)
-            label = f"{amount} золота"
-            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "gold")
-        elif ctype == "silver":
-            add_silver(uid, amount)
-            label = f"{amount} серебра"
-            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "silver")
-        else:
-            add_gold(uid, amount)
-            add_silver(uid, amount)
-            label = f"{amount} золота + {amount} серебра"
-            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "gold")
-            record_transaction(uid, uname or "", fname or "", "deposit", "admin", amount, "silver")
-        gold, silver = get_balance(uid)
-        return web.json_response({
-            "ok": True,
-            "message": f"@{uname or uid}: +{label}. Баланс: {gold}G / {silver}S"
-        }, headers=CORS)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": str(e)}, headers=CORS)
-
-@web.middleware
-async def cors_middleware(request, handler):
-    """Добавляем CORS заголовки на ВСЕ ответы включая 404/405."""
-    if request.method == "OPTIONS":
-        return web.Response(status=204, headers=CORS)
-    try:
-        resp = await handler(request)
-    except web.HTTPException as ex:
-        resp = ex
-    for k, v in CORS.items():
-        resp.headers[k] = v
-    return resp
-
 async def start_http(application):
-    app_http = web.Application(middlewares=[cors_middleware])
+    app_http = web.Application()
     app_http["bot"] = application.bot
     app_http.router.add_get("/",             http_health)
-    # Webhook роут — путь совпадает с тем что передаём в set_webhook
-    webhook_path = f"/tg_webhook_{BOT_TOKEN[:8]}"
-    app_http.router.add_post(webhook_path, http_telegram_webhook)
     app_http.router.add_get("/balance",      http_balance)
     app_http.router.add_options("/balance",  http_balance)
     app_http.router.add_post("/create_invoice",         http_create_invoice)
@@ -923,21 +615,15 @@ async def start_http(application):
     app_http.router.add_post("/cryptobot_webhook",      http_cryptobot_webhook)
     app_http.router.add_options("/cryptobot_webhook",   http_cryptobot_webhook)
     app_http.router.add_get("/admin/stats",  http_admin_stats)
-    app_http.router.add_post("/admin/addbal",  http_admin_addbal)
-    app_http.router.add_options("/admin/addbal",  http_admin_addbal)
     app_http.router.add_get("/admin/panel",  http_admin_panel)
     app_http.router.add_get("/gifts",             http_get_gifts)
     app_http.router.add_options("/gifts",         http_get_gifts)
     app_http.router.add_post("/withdraw_gift",        http_withdraw_gift)
     app_http.router.add_options("/withdraw_gift",     http_withdraw_gift)
-    # Статика — в самом конце чтобы не перехватывать API роуты
-    app_http.router.add_get("/app",           http_serve_static)
-    app_http.router.add_get("/{filename}",    http_serve_static)
     runner = web.AppRunner(app_http)
     await runner.setup()
-    actual_port = PORT if PORT else 8080
-    await web.TCPSite(runner, "0.0.0.0", actual_port).start()
-    logger.info(f"HTTP server on port {actual_port}")
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    logger.info(f"HTTP server on port {PORT}")
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -1619,40 +1305,15 @@ async def run():
     )
     app.add_handler(admin_conv)
 
-    # Webhook или polling — берём из переменных окружения
-    RAILWAY_URL = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
-    base_url = WEBHOOK_URL or (f"https://{RAILWAY_URL}" if RAILWAY_URL else "")
-    webhook_path = f"/tg_webhook_{BOT_TOKEN[:8]}"
-
-    global _tg_app
-
+    logger.info("Бот запускается…")
     async with app:
         await app.initialize()
         await app.start()
-
-        # Сразу устанавливаем глобальную ссылку — до HTTP сервера
-        _tg_app = app
-
-        # Запускаем HTTP сервер
-        await start_http(app)
-        logger.info("Бот запускается…")
-
-        if base_url:
-            # Webhook режим
-            full_webhook_url = base_url.rstrip("/") + webhook_path
-            await app.bot.set_webhook(
-                url=full_webhook_url,
-                drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES,
-            )
-            logger.info(f"Webhook: {full_webhook_url}")
-        else:
-            # Polling режим — удаляем webhook и стартуем polling
-            await app.bot.delete_webhook(drop_pending_updates=True)
-            await app.updater.start_polling(drop_pending_updates=True)
-            logger.info("Polling режим активен!")
-
+        # Запускаем HTTP ПОСЛЕ инициализации бота — иначе create_invoice_link упадёт
+        if PORT:
+            await start_http(app)
+        logger.info("Бот и HTTP запущены!")
+        await app.updater.start_polling()
         await asyncio.Event().wait()
 
 
