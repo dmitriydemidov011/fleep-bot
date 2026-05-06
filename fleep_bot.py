@@ -882,8 +882,6 @@ async def start_http(application):
     app_http = web.Application()
     app_http["bot"] = application.bot
     app_http.router.add_get("/",             http_health)
-    app_http.router.add_get("/app",          http_serve_static)
-    app_http.router.add_get("/{filename}",   http_serve_static)
     app_http.router.add_get("/balance",      http_balance)
     app_http.router.add_options("/balance",  http_balance)
     app_http.router.add_post("/create_invoice",         http_create_invoice)
@@ -900,6 +898,9 @@ async def start_http(application):
     app_http.router.add_options("/gifts",         http_get_gifts)
     app_http.router.add_post("/withdraw_gift",        http_withdraw_gift)
     app_http.router.add_options("/withdraw_gift",     http_withdraw_gift)
+    # Статика — в самом конце чтобы не перехватывать API роуты
+    app_http.router.add_get("/app",           http_serve_static)
+    app_http.router.add_get("/{filename}",    http_serve_static)
     runner = web.AppRunner(app_http)
     await runner.setup()
     actual_port = PORT if PORT else 8080
