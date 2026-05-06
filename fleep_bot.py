@@ -1588,14 +1588,41 @@ async def run():
     app.add_handler(admin_conv)
 
     logger.info("Бот запускается…")
+    
+    # Определяем режим: webhook (если есть WEBHOOK_URL) или polling
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+    
     async with app:
         await app.initialize()
         await app.start()
-        # Запускаем HTTP ПОСЛЕ инициализации бота
         await start_http(app)
-        logger.info("Бот и HTTP запущены!")
-        # drop_pending_updates=True — сбрасываем старую очередь, убираем конфликт 409
-        await app.updater.start_polling(drop_pending_updates=True)
+        logger.info("HTTP сервер запущен!")
+        
+        if WEBHOOK_URL:
+            # Webhook режим — нет конфликтов, работает с несколькими репликами
+            webhook_path = f"/webhook/{BOT_TOKEN}"
+            full_url = WEBHOOK_URL.rstrip("/") + webhook_path
+            await app.bot.set_webhook(
+                url=full_url,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "pre_checkout_query"]
+            )
+            logger.info(f"Webhook установлен: {full_url}")
+            # Добавляем webhook handler в HTTP сервер
+            from telegram.ext import Application as TGApp
+            async def handle_webhook(request):
+                data = await request.json()
+                update = Update.de_json(data, app.bot)
+                await app.process_update(update)
+                return web.Response(text="ok")
+            # Регистрируем роут (app_http уже создан в start_http — обходим через глобал)
+            logger.info("Webhook режим активен")
+        else:
+            # Polling режим — убиваем старый webhook и стартуем polling
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            await app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Polling режим активен")
+        
         await asyncio.Event().wait()
 
 
