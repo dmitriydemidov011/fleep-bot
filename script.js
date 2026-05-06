@@ -2416,6 +2416,12 @@ async function buyStarPackage(stars, coins) {
             })
         });
 
+        // Проверяем что ответ JSON, а не HTML страница ошибки
+        const contentType = resp.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            const text = await resp.text();
+            throw new Error(`Сервер вернул не JSON (${resp.status}): ${text.slice(0, 100)}`);
+        }
         const data = await resp.json();
         if (!data.invoice_url) throw new Error(data.error || 'no invoice_url');
 
