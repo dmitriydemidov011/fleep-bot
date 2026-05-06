@@ -49,6 +49,13 @@ PORT = int(os.environ.get("PORT", 0))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─── TON WALLET CONFIG ───────────────────────────────────────────────────────
+TON_WALLET_ADDRESS = os.environ.get("TON_WALLET_ADDRESS", "")  # Ваш TON адрес
+TON_API_KEY        = os.environ.get("TON_API_KEY", "")          # toncenter.com API key
+TON_COINS_PER_TON  = 1000  # Сколько золотых монет за 1 TON
+_ton_checked_txs   = set()  # Уже обработанные транзакции
+
+
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
 def init_db():
@@ -478,6 +485,112 @@ async def http_get_gifts(request: web.Request) -> web.Response:
     """GET /gifts — список активных подарков для фронтенда"""
     gifts = get_gifts_for_api()
     return web.json_response({"gifts": gifts}, headers=CORS)
+
+
+
+# ─── TON WALLET PAYMENT ──────────────────────────────────────────────────────
+
+async def check_ton_payment(user_id: int, amount_ton: float, comment: str) -> bool:
+    """Проверяет поступление TON на кошелёк через toncenter API."""
+    if not TON_WALLET_ADDRESS or not TON_API_KEY:
+        return False
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://toncenter.com/api/v2/getTransactions",
+                params={
+                    "address": TON_WALLET_ADDRESS,
+                    "limit": 20,
+                    "api_key": TON_API_KEY
+                }
+            ) as r:
+                data = await r.json()
+        txs = data.get("result", [])
+        for tx in txs:
+            tx_id = tx.get("transaction_id", {}).get("hash", "")
+            if tx_id in _ton_checked_txs:
+                continue
+            msg = tx.get("in_msg", {})
+            msg_comment = msg.get("message", "")
+            value = int(msg.get("value", 0)) / 1e9  # нанотоны → TON
+            if msg_comment == comment and abs(value - amount_ton) < 0.01:
+                _ton_checked_txs.add(tx_id)
+                return True
+    except Exception as e:
+        logger.error(f"check_ton_payment error: {e}")
+    return False
+
+
+async def http_create_ton_invoice(request: web.Request) -> web.Response:
+    """POST /create_ton_invoice — создаёт TON счёт для оплаты."""
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS)
+    try:
+        data    = await request.json()
+        user_id = int(data.get("user_id", 0))
+        tons    = float(data.get("tons", 1.0))
+        if not user_id or tons <= 0:
+            return web.json_response({"error": "bad params"}, status=400, headers=CORS)
+
+        coins   = int(tons * TON_COINS_PER_TON)
+        comment = f"fleep_{user_id}"  # уникальный комментарий для идентификации
+
+        if not TON_WALLET_ADDRESS:
+            return web.json_response({"error": "TON not configured"}, status=503, headers=CORS)
+
+        return web.json_response({
+            "ok": True,
+            "wallet":  TON_WALLET_ADDRESS,
+            "tons":    tons,
+            "coins":   coins,
+            "comment": comment,
+            # deeplink для открытия Telegram Wallet
+            "deeplink": f"ton://transfer/{TON_WALLET_ADDRESS}?amount={int(tons*1e9)}&text={comment}"
+        }, headers=CORS)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500, headers=CORS)
+
+
+async def http_verify_ton(request: web.Request) -> web.Response:
+    """POST /verify_ton — проверяет поступление TON и начисляет монеты."""
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS)
+    try:
+        data    = await request.json()
+        user_id = int(data.get("user_id", 0))
+        tons    = float(data.get("tons", 0))
+        comment = data.get("comment", "")
+        if not user_id or not tons or not comment:
+            return web.json_response({"ok": False, "error": "bad params"}, headers=CORS)
+
+        paid = await check_ton_payment(user_id, tons, comment)
+        if paid:
+            coins = int(tons * TON_COINS_PER_TON)
+            add_gold(user_id, coins)
+            record_transaction(user_id, "", "", "deposit", "ton", coins, "gold")
+            pay_ref_bonus(user_id, coins)
+            logger.info(f"TON payment confirmed: user={user_id} tons={tons} coins={coins}")
+
+            # Уведомляем пользователя
+            bot_obj = request.app.get("bot")
+            if bot_obj:
+                try:
+                    gold, silver = get_balance(user_id)
+                    await bot_obj.send_message(
+                        user_id,
+                        f"✅ *Оплата TON получена!*\n\n"
+                        f"💎 {tons} TON → 🟡 {coins} золота\n"
+                        f"💰 Баланс: 🟡 {gold}",
+                        parse_mode="Markdown"
+                    )
+                except Exception: pass
+
+            return web.json_response({"ok": True, "coins": coins}, headers=CORS)
+        else:
+            return web.json_response({"ok": False, "error": "payment not found"}, headers=CORS)
+    except Exception as e:
+        logger.error(f"verify_ton error: {e}")
+        return web.json_response({"ok": False, "error": str(e)}, headers=CORS)
 
 
 async def http_withdraw_gift(request: web.Request) -> web.Response:
@@ -1155,10 +1268,11 @@ async def addbal_receive_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["addbal_amount"] = amount
     username = ctx.user_data.get("addbal_username", "?")
 
+    uid = ctx.user_data.get("addbal_user_id", 0)
     keyboard = [[
-        InlineKeyboardButton("🟡 Золото", callback_data="addbal_gold"),
-        InlineKeyboardButton("⚪ Серебро", callback_data="addbal_silver"),
-        InlineKeyboardButton("🟡+⚪ Оба", callback_data="addbal_both"),
+        InlineKeyboardButton("🟡 Золото",  callback_data=f"addbal_gold_{uid}_{amount}"),
+        InlineKeyboardButton("⚪ Серебро", callback_data=f"addbal_silver_{uid}_{amount}"),
+        InlineKeyboardButton("🟡+⚪ Оба",  callback_data=f"addbal_both_{uid}_{amount}"),
     ]]
     await update.message.reply_text(
         f"Начислить *{amount}* — какой тип монет для @{username}?",
@@ -1172,10 +1286,25 @@ async def addbal_confirm_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id  = ctx.user_data["addbal_user_id"]
-    username = ctx.user_data["addbal_username"]
-    amount   = ctx.user_data["addbal_amount"]
-    coin_type = query.data  # addbal_gold / addbal_silver / addbal_both
+    # Декодируем: addbal_gold_12345_500
+    parts = query.data.split("_")
+    try:
+        coin_key = parts[1]           # gold/silver/both
+        user_id  = int(parts[2])
+        amount   = int(parts[3])
+    except (IndexError, ValueError):
+        # Fallback на ctx.user_data
+        coin_key = query.data.replace("addbal_", "").split("_")[0]
+        user_id  = ctx.user_data.get("addbal_user_id", 0)
+        amount   = ctx.user_data.get("addbal_amount", 0)
+    if not user_id or not amount:
+        await query.message.reply_text("❌ Данные потеряны. Начни заново /admin")
+        return ConversationHandler.END
+    conn_u = sqlite3.connect(DB_PATH)
+    row_u  = conn_u.execute("SELECT username,full_name FROM users WHERE user_id=?", (user_id,)).fetchone()
+    conn_u.close()
+    username = row_u[0] if row_u and row_u[0] else str(user_id)
+    coin_type = f"addbal_{coin_key}"
 
     if coin_type == "addbal_gold":
         add_gold(user_id, amount)
@@ -1290,7 +1419,7 @@ async def run():
             WAIT_BROADCAST_BTN:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_btn)],
             WAIT_ADDBAL_USER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, addbal_receive_user)],
             WAIT_ADDBAL_AMOUNT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, addbal_receive_amount)],
-            WAIT_ADDBAL_TYPE:    [CallbackQueryHandler(addbal_confirm_type, pattern=r"^addbal_(gold|silver|both)$")],
+            WAIT_ADDBAL_TYPE:    [CallbackQueryHandler(addbal_confirm_type, pattern=r"^addbal_(gold|silver|both)(_.+)?$")],
             WAIT_GIFT_NAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_name)],
             WAIT_GIFT_COST:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_cost)],
             WAIT_GIFT_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_coins)],
