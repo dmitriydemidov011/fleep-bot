@@ -894,8 +894,21 @@ async def http_admin_addbal(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, headers=CORS)
 
+@web.middleware
+async def cors_middleware(request, handler):
+    """Добавляем CORS заголовки на ВСЕ ответы включая 404/405."""
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=CORS)
+    try:
+        resp = await handler(request)
+    except web.HTTPException as ex:
+        resp = ex
+    for k, v in CORS.items():
+        resp.headers[k] = v
+    return resp
+
 async def start_http(application):
-    app_http = web.Application()
+    app_http = web.Application(middlewares=[cors_middleware])
     app_http["bot"] = application.bot
     app_http.router.add_get("/",             http_health)
     # Webhook роут — путь совпадает с тем что передаём в set_webhook
