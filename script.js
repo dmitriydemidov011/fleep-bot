@@ -110,25 +110,42 @@ let rocketGameState = {
 
 let currentNewGift = null;
 
-// ===== СИСТЕМА ПОДАРКОВ =====
+// ===== СИСТЕМА ПОДАРКОВ (с редкостью) =====
+// rare: 15-99 монет  |  epic: 100-499  |  legendary: 500+
 const GIFT_SYSTEM = {
     gifts: [
-        { type: 'heart',      name: 'Сердце',           minValue: 15,  maxValue: 50  },
-        { type: 'bear',       name: 'Плюшевый медведь', minValue: 15,  maxValue: 50  },
-        { type: 'gift',       name: 'Подарок',          minValue: 25,  maxValue: 100 },
-        { type: 'rose',       name: 'Роза',             minValue: 25,  maxValue: 100 },
-        { type: 'cake',       name: 'Торт',             minValue: 50,  maxValue: 200 },
-        { type: 'bouquet',    name: 'Букет',            minValue: 50,  maxValue: 200 },
-        { type: 'rocket',     name: 'Ракета',           minValue: 50,  maxValue: 200 },
-        { type: 'cup',        name: 'Кубок',            minValue: 100, maxValue: 500 },
-        { type: 'ring',       name: 'Кольцо',           minValue: 100, maxValue: 500 },
-        { type: 'diamond',    name: 'Алмаз',            minValue: 100, maxValue: 500 },
-        { type: 'champagne',  name: 'Шампанское',       minValue: 100, maxValue: 500 }
+        // ── RARE (15–99 монет) ──
+        { type: 'heart',     name: 'Сердце',           tier: 'rare',      minValue: 15,  maxValue: 50,  weight: 30 },
+        { type: 'bear',      name: 'Плюшевый медведь', tier: 'rare',      minValue: 15,  maxValue: 50,  weight: 30 },
+        { type: 'rose',      name: 'Роза',             tier: 'rare',      minValue: 25,  maxValue: 99,  weight: 25 },
+        { type: 'gift',      name: 'Подарок',          tier: 'rare',      minValue: 25,  maxValue: 99,  weight: 20 },
+        // ── EPIC (100–499 монет) ──
+        { type: 'cake',      name: 'Торт',             tier: 'epic',      minValue: 100, maxValue: 300, weight: 12 },
+        { type: 'bouquet',   name: 'Букет',            tier: 'epic',      minValue: 100, maxValue: 300, weight: 12 },
+        { type: 'rocket',    name: 'Ракета',           tier: 'epic',      minValue: 100, maxValue: 499, weight: 10 },
+        { type: 'champagne', name: 'Шампанское',       tier: 'epic',      minValue: 100, maxValue: 499, weight: 8  },
+        // ── LEGENDARY (500+ монет) ──
+        { type: 'cup',       name: 'Кубок',            tier: 'legendary', minValue: 500, maxValue: 1000, weight: 5  },
+        { type: 'ring',      name: 'Кольцо',           tier: 'legendary', minValue: 500, maxValue: 1000, weight: 4  },
+        { type: 'diamond',   name: 'Алмаз',            tier: 'legendary', minValue: 500, maxValue: 2000, weight: 2  }
     ],
+    getRarity(value) {
+        if (value >= 500) return 'legendary';
+        if (value >= 100) return 'epic';
+        if (value >= 15)  return 'rare';
+        return 'common';
+    },
     getRandomGift(winAmount) {
         const eligible = this.gifts.filter(g => winAmount >= g.minValue);
         if (!eligible.length) return null;
-        return eligible[Math.floor(Math.random() * eligible.length)];
+        // Взвешенный случайный выбор
+        const totalWeight = eligible.reduce((s, g) => s + g.weight, 0);
+        let rnd = Math.random() * totalWeight;
+        for (const g of eligible) {
+            rnd -= g.weight;
+            if (rnd <= 0) return g;
+        }
+        return eligible[eligible.length - 1];
     }
 };
 
@@ -144,6 +161,7 @@ document.addEventListener('DOMContentLoaded', function() {
         startRocketCountdown();
         updateHeaderUsername();
         simulateOnlineCounts();
+        renderCaseCards();
     } catch(e) {
         console.error('INIT ERROR:', e);
         // Показываем ошибку на экране для дебага
@@ -332,14 +350,21 @@ function showSection(section) {
 }
 
 function selectGame(game) {
-    const list = document.querySelector('.game-cards-list');
-    const title = document.querySelector('.game-section-title');
-    if (list) list.style.display = 'none';
-    if (title) title.style.display = 'none';
+    // Скрываем весь game-section
+    const gameSection = document.getElementById('game-section');
+    if (gameSection) gameSection.style.display = 'none';
+
+    // Скрываем все game-container
     document.querySelectorAll('.game-container').forEach(el => el.style.display = 'none');
+
+    // Показываем нужную игру как fullscreen overlay
     const target = document.getElementById(game + '-game');
-    if (target) target.style.display = 'block';
-    // Скрыть нижнюю навигацию, показать кнопку "назад"
+    if (target) {
+        target.style.display = 'block';
+        target.classList.add('game-fullscreen');
+    }
+
+    // Скрыть навигацию, показать кнопку назад
     const nav = document.querySelector('.navigation');
     if (nav) nav.style.bottom = '-120px';
     const backBtn = document.getElementById('global-back-btn');
@@ -347,12 +372,17 @@ function selectGame(game) {
 }
 
 function backToGamesList() {
-    document.querySelectorAll('.game-container').forEach(el => el.style.display = 'none');
-    const list = document.querySelector('.game-cards-list');
-    const title = document.querySelector('.game-section-title');
-    if (list) list.style.display = 'flex';
-    if (title) title.style.display = 'block';
-    // Вернуть нижнюю навигацию, скрыть кнопку "назад"
+    // Скрываем все игры
+    document.querySelectorAll('.game-container').forEach(el => {
+        el.style.display = 'none';
+        el.classList.remove('game-fullscreen');
+    });
+
+    // Показываем game-section
+    const gameSection = document.getElementById('game-section');
+    if (gameSection) gameSection.style.display = '';
+
+    // Вернуть навигацию
     const nav = document.querySelector('.navigation');
     if (nav) nav.style.bottom = '';
     const backBtn = document.getElementById('global-back-btn');
@@ -390,13 +420,7 @@ function checkBetValidity() {
     const warning = $id('balance-warning');
     const playBtn = $id('play-btn');
     if (!warning || !playBtn) return;
-    if (bet < 10) {
-        warning.textContent = '⚠ Минимальная ставка: 10';
-        warning.style.display = 'flex';
-        playBtn.disabled = true;
-        playBtn.style.opacity = '0.5';
-    } else if (bet > balance) {
-        warning.textContent = '⚠ Недостаточно средств';
+    if (bet > balance) {
         warning.style.display = 'flex';
         playBtn.disabled = true;
         playBtn.style.opacity = '0.5';
@@ -419,18 +443,18 @@ function updateBetDisplay() {
 }
 
 function changeBet(amount) {
-    gameState.currentBet = Math.max(10, gameState.currentBet + amount);
+    gameState.currentBet = Math.max(1, gameState.currentBet + amount);
     updateBetDisplay();
 }
 
 function setBet(amount) {
-    gameState.currentBet = Math.max(10, amount);
+    gameState.currentBet = Math.max(1, amount);
     updateBetDisplay();
 }
 
 // Новые функции управления для нового дизайна
 function minesBetInputChange(val) {
-    gameState.currentBet = Math.max(10, parseInt(val) || 10);
+    gameState.currentBet = Math.max(1, parseInt(val) || 1);
     updateBetDisplay();
 }
 
@@ -1414,7 +1438,7 @@ function claimTaskReward(id) {
 
 // ===== КЕЙСЫ — КОНФИГ =====
 const CASE_CONFIG = {
-    peace:    { name: 'Покой в богатстве', currency: 'silver', cost: 555,  allowGold: false },
+    peace:    { name: 'Покой в богатстве', currency: 'silver', cost: 555,  goldCost: 555, allowGold: true },
     stars67:  { name: '67 звёзд',          currency: 'gold',   cost: 67,   allowGold: true  },
     daily:    { name: 'Ежедневный',         currency: null,     cost: 0,    free: true       },
     strike:   { name: 'СТРАЙК',            currency: null,     cost: 0,    strike: true     },
@@ -1424,15 +1448,151 @@ const CASE_CONFIG = {
     stars100: { name: '100 звёзд',          currency: 'gold',   cost: 100,  allowGold: true  },
 };
 
+// ===== ПИКСЕЛЬ-АРТ SVG ИКОНКИ КЕЙСОВ =====
+const CASE_PIXEL_ICONS = {
+    daily: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#22aa44"/><rect x="4" y="2" width="1" height="2" fill="#22aa44"/><rect x="11" y="2" width="1" height="2" fill="#22aa44"/><rect x="5" y="2" width="6" height="1" fill="#0a1a0a"/>
+        <rect x="2" y="4" width="12" height="3" fill="#33cc55"/><rect x="2" y="4" width="1" height="3" fill="#1a7730"/><rect x="13" y="4" width="1" height="3" fill="#1a7730"/><rect x="3" y="4" width="4" height="1" fill="#66ee88"/>
+        <rect x="2" y="7" width="12" height="1" fill="#155522"/><rect x="7" y="6" width="2" height="2" fill="#55ff77"/><rect x="7" y="7" width="2" height="1" fill="#22cc44"/>
+        <rect x="2" y="8" width="12" height="4" fill="#29a843"/><rect x="2" y="8" width="1" height="4" fill="#1a7730"/><rect x="13" y="8" width="1" height="4" fill="#1a7730"/>
+        <rect x="2" y="12" width="12" height="1" fill="#155522"/><rect x="2" y="13" width="12" height="1" fill="#0f3d18"/>
+        <rect x="3" y="4" width="1" height="1" fill="#88ffaa"/><rect x="12" y="4" width="1" height="1" fill="#88ffaa"/><rect x="3" y="12" width="1" height="1" fill="#88ffaa"/><rect x="12" y="12" width="1" height="1" fill="#88ffaa"/>
+        <rect x="6" y="9" width="4" height="1" fill="#ccffdd"/><rect x="6" y="10" width="3" height="1" fill="#ccffdd"/><rect x="6" y="11" width="1" height="1" fill="#ccffdd"/><rect x="6" y="12" width="1" height="1" fill="#ccffdd"/>
+    </svg>`,
+    strike: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#dd9900"/><rect x="4" y="2" width="1" height="2" fill="#dd9900"/><rect x="11" y="2" width="1" height="2" fill="#dd9900"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#ffcc00"/><rect x="2" y="4" width="1" height="3" fill="#996600"/><rect x="13" y="4" width="1" height="3" fill="#996600"/><rect x="3" y="4" width="4" height="1" fill="#ffee88"/>
+        <rect x="2" y="7" width="12" height="1" fill="#774400"/><rect x="7" y="6" width="2" height="2" fill="#ffee44"/><rect x="7" y="7" width="2" height="1" fill="#cc8800"/>
+        <rect x="2" y="8" width="12" height="4" fill="#e8a800"/><rect x="2" y="8" width="1" height="4" fill="#996600"/><rect x="13" y="8" width="1" height="4" fill="#996600"/>
+        <rect x="2" y="12" width="12" height="1" fill="#774400"/><rect x="2" y="13" width="12" height="1" fill="#553300"/>
+        <rect x="3" y="4" width="1" height="1" fill="#ffff99"/><rect x="12" y="4" width="1" height="1" fill="#ffff99"/><rect x="3" y="12" width="1" height="1" fill="#ffff99"/><rect x="12" y="12" width="1" height="1" fill="#ffff99"/>
+        <rect x="9" y="9" width="2" height="1" fill="#fff5aa"/><rect x="8" y="9" width="1" height="1" fill="#fff5aa"/><rect x="7" y="10" width="3" height="1" fill="#fff5aa"/><rect x="6" y="11" width="2" height="1" fill="#fff5aa"/><rect x="7" y="12" width="2" height="1" fill="#fff5aa"/>
+    </svg>`,
+    peace: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#8855dd"/><rect x="4" y="2" width="1" height="2" fill="#8855dd"/><rect x="11" y="2" width="1" height="2" fill="#8855dd"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#9966ee"/><rect x="2" y="4" width="1" height="3" fill="#4422aa"/><rect x="13" y="4" width="1" height="3" fill="#4422aa"/><rect x="3" y="4" width="4" height="1" fill="#ccaaff"/>
+        <rect x="2" y="7" width="12" height="1" fill="#331188"/><rect x="7" y="6" width="2" height="2" fill="#bb99ff"/><rect x="7" y="7" width="2" height="1" fill="#7744cc"/>
+        <rect x="2" y="8" width="12" height="4" fill="#8855cc"/><rect x="2" y="8" width="1" height="4" fill="#4422aa"/><rect x="13" y="8" width="1" height="4" fill="#4422aa"/>
+        <rect x="2" y="12" width="12" height="1" fill="#331188"/><rect x="2" y="13" width="12" height="1" fill="#220066"/>
+        <rect x="3" y="4" width="1" height="1" fill="#eeddff"/><rect x="12" y="4" width="1" height="1" fill="#eeddff"/><rect x="3" y="12" width="1" height="1" fill="#eeddff"/><rect x="12" y="12" width="1" height="1" fill="#eeddff"/>
+        <rect x="6" y="9" width="1" height="1" fill="#fff5aa"/><rect x="8" y="9" width="1" height="1" fill="#fff5aa"/><rect x="10" y="9" width="1" height="1" fill="#fff5aa"/><rect x="6" y="10" width="5" height="1" fill="#fff5aa"/><rect x="6" y="11" width="5" height="1" fill="#fff5aa"/>
+    </svg>`,
+    stars15: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#3388cc"/><rect x="4" y="2" width="1" height="2" fill="#3388cc"/><rect x="11" y="2" width="1" height="2" fill="#3388cc"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#44aadd"/><rect x="2" y="4" width="1" height="3" fill="#225588"/><rect x="13" y="4" width="1" height="3" fill="#225588"/><rect x="3" y="4" width="4" height="1" fill="#99ddff"/>
+        <rect x="2" y="7" width="12" height="1" fill="#113366"/><rect x="7" y="6" width="2" height="2" fill="#88ccff"/><rect x="7" y="7" width="2" height="1" fill="#3377bb"/>
+        <rect x="2" y="8" width="12" height="4" fill="#3399cc"/><rect x="2" y="8" width="1" height="4" fill="#225588"/><rect x="13" y="8" width="1" height="4" fill="#225588"/>
+        <rect x="2" y="12" width="12" height="1" fill="#113366"/><rect x="2" y="13" width="12" height="1" fill="#0a2244"/>
+        <rect x="3" y="4" width="1" height="1" fill="#bbeeff"/><rect x="12" y="4" width="1" height="1" fill="#bbeeff"/><rect x="3" y="12" width="1" height="1" fill="#bbeeff"/><rect x="12" y="12" width="1" height="1" fill="#bbeeff"/>
+        <rect x="7" y="9" width="2" height="1" fill="#ffffff"/><rect x="6" y="10" width="4" height="1" fill="#ffffff"/><rect x="7" y="11" width="2" height="1" fill="#ffffff"/><rect x="7" y="9" width="2" height="3" fill="#ffffff"/>
+    </svg>`,
+    stars25: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#2299cc"/><rect x="4" y="2" width="1" height="2" fill="#2299cc"/><rect x="11" y="2" width="1" height="2" fill="#2299cc"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#33bbdd"/><rect x="2" y="4" width="1" height="3" fill="#116688"/><rect x="13" y="4" width="1" height="3" fill="#116688"/><rect x="3" y="4" width="4" height="1" fill="#88eeff"/>
+        <rect x="2" y="7" width="12" height="1" fill="#0a4455"/><rect x="7" y="6" width="2" height="2" fill="#77ddff"/><rect x="7" y="7" width="2" height="1" fill="#2288aa"/>
+        <rect x="2" y="8" width="12" height="4" fill="#22aacc"/><rect x="2" y="8" width="1" height="4" fill="#116688"/><rect x="13" y="8" width="1" height="4" fill="#116688"/>
+        <rect x="2" y="12" width="12" height="1" fill="#0a4455"/><rect x="2" y="13" width="12" height="1" fill="#062233"/>
+        <rect x="3" y="4" width="1" height="1" fill="#aaffff"/><rect x="12" y="4" width="1" height="1" fill="#aaffff"/><rect x="3" y="12" width="1" height="1" fill="#aaffff"/><rect x="12" y="12" width="1" height="1" fill="#aaffff"/>
+        <rect x="7" y="9" width="2" height="1" fill="#ffffff"/><rect x="6" y="10" width="4" height="1" fill="#ffffff"/><rect x="7" y="11" width="2" height="1" fill="#ffffff"/><rect x="7" y="9" width="2" height="3" fill="#ffffff"/>
+        <rect x="6" y="9" width="1" height="1" fill="#ffffff" opacity="0.5"/><rect x="9" y="11" width="1" height="1" fill="#ffffff" opacity="0.5"/>
+    </svg>`,
+    stars50: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#7799bb"/><rect x="4" y="2" width="1" height="2" fill="#7799bb"/><rect x="11" y="2" width="1" height="2" fill="#7799bb"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#99bbcc"/><rect x="2" y="4" width="1" height="3" fill="#556677"/><rect x="13" y="4" width="1" height="3" fill="#556677"/><rect x="3" y="4" width="4" height="1" fill="#cceeff"/>
+        <rect x="2" y="7" width="12" height="1" fill="#334455"/><rect x="7" y="6" width="2" height="2" fill="#bbddee"/><rect x="7" y="7" width="2" height="1" fill="#778899"/>
+        <rect x="2" y="8" width="12" height="4" fill="#889aaa"/><rect x="2" y="8" width="1" height="4" fill="#556677"/><rect x="13" y="8" width="1" height="4" fill="#556677"/>
+        <rect x="2" y="12" width="12" height="1" fill="#334455"/><rect x="2" y="13" width="12" height="1" fill="#223344"/>
+        <rect x="3" y="4" width="1" height="1" fill="#ddeeff"/><rect x="12" y="4" width="1" height="1" fill="#ddeeff"/><rect x="3" y="12" width="1" height="1" fill="#ddeeff"/><rect x="12" y="12" width="1" height="1" fill="#ddeeff"/>
+        <rect x="7" y="9" width="2" height="1" fill="#eef4ff"/><rect x="6" y="10" width="4" height="1" fill="#eef4ff"/><rect x="7" y="11" width="2" height="1" fill="#eef4ff"/><rect x="7" y="9" width="2" height="3" fill="#eef4ff"/>
+    </svg>`,
+    stars67: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#cc2222"/><rect x="4" y="2" width="1" height="2" fill="#cc2222"/><rect x="11" y="2" width="1" height="2" fill="#cc2222"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#dd3333"/><rect x="2" y="4" width="1" height="3" fill="#881111"/><rect x="13" y="4" width="1" height="3" fill="#881111"/><rect x="3" y="4" width="4" height="1" fill="#ff8888"/>
+        <rect x="2" y="7" width="12" height="1" fill="#660000"/><rect x="7" y="6" width="2" height="2" fill="#ff7777"/><rect x="7" y="7" width="2" height="1" fill="#bb2222"/>
+        <rect x="2" y="8" width="12" height="4" fill="#cc2222"/><rect x="2" y="8" width="1" height="4" fill="#881111"/><rect x="13" y="8" width="1" height="4" fill="#881111"/>
+        <rect x="2" y="12" width="12" height="1" fill="#660000"/><rect x="2" y="13" width="12" height="1" fill="#440000"/>
+        <rect x="3" y="4" width="1" height="1" fill="#ffaaaa"/><rect x="12" y="4" width="1" height="1" fill="#ffaaaa"/><rect x="3" y="12" width="1" height="1" fill="#ffaaaa"/><rect x="12" y="12" width="1" height="1" fill="#ffaaaa"/>
+        <rect x="7" y="9" width="2" height="1" fill="#ffeeee"/><rect x="6" y="9" width="1" height="1" fill="#ffeeee"/><rect x="9" y="9" width="1" height="1" fill="#ffeeee"/>
+        <rect x="6" y="10" width="4" height="1" fill="#ffeeee"/><rect x="7" y="10" width="1" height="1" fill="#cc2222"/><rect x="9" y="10" width="1" height="1" fill="#cc2222"/>
+        <rect x="7" y="11" width="1" height="1" fill="#ffeeee"/><rect x="9" y="11" width="1" height="1" fill="#ffeeee"/>
+        <rect x="7" y="12" width="1" height="1" fill="#ffeeee"/><rect x="8" y="12" width="1" height="1" fill="#ffeeee"/><rect x="9" y="12" width="1" height="1" fill="#ffeeee"/>
+    </svg>`,
+    stars100: `<svg class="case-pixel-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="5" y="1" width="6" height="1" fill="#aa4400"/><rect x="4" y="2" width="1" height="2" fill="#aa4400"/><rect x="11" y="2" width="1" height="2" fill="#aa4400"/><rect x="5" y="2" width="6" height="1" fill="#111111"/>
+        <rect x="2" y="4" width="12" height="3" fill="#cc5500"/><rect x="2" y="4" width="1" height="3" fill="#773300"/><rect x="13" y="4" width="1" height="3" fill="#773300"/><rect x="3" y="4" width="4" height="1" fill="#ff9955"/>
+        <rect x="2" y="7" width="12" height="1" fill="#552200"/><rect x="7" y="6" width="2" height="2" fill="#ff8844"/><rect x="7" y="7" width="2" height="1" fill="#993300"/>
+        <rect x="2" y="8" width="12" height="4" fill="#bb4400"/><rect x="2" y="8" width="1" height="4" fill="#773300"/><rect x="13" y="8" width="1" height="4" fill="#773300"/>
+        <rect x="2" y="12" width="12" height="1" fill="#552200"/><rect x="2" y="13" width="12" height="1" fill="#331100"/>
+        <rect x="3" y="4" width="1" height="1" fill="#ffcc99"/><rect x="12" y="4" width="1" height="1" fill="#ffcc99"/><rect x="3" y="12" width="1" height="1" fill="#ffcc99"/><rect x="12" y="12" width="1" height="1" fill="#ffcc99"/>
+        <rect x="6" y="9" width="1" height="1" fill="#fff5aa"/><rect x="8" y="9" width="1" height="1" fill="#fff5aa"/><rect x="10" y="9" width="1" height="1" fill="#fff5aa"/>
+        <rect x="6" y="10" width="5" height="1" fill="#fff5aa"/><rect x="6" y="11" width="5" height="1" fill="#fff5aa"/>
+        <rect x="7" y="9" width="1" height="1" fill="#ffee44"/><rect x="9" y="9" width="1" height="1" fill="#ffee44"/>
+    </svg>`
+};
+
+const CASE_UI_CONFIG = {
+    daily:    { topClass: 'case-top-free',   cardClass: 'case-card-free',   priceClass: 'free',    priceLabel: 'Бесплатно',          glowFilter: 'drop-shadow(0 0 10px rgba(74,222,128,0.7))' },
+    strike:   { topClass: 'case-top-gold',   cardClass: 'case-card-gold',   priceClass: '',        priceLabel: '7 дней депозита',    glowFilter: 'drop-shadow(0 0 10px rgba(252,211,77,0.8))' },
+    peace:    { topClass: 'case-top-peace',  cardClass: 'case-card-peace',  priceClass: 'peace',   priceLabel: '555 ⚪ / 555 🟡',    glowFilter: 'drop-shadow(0 0 10px rgba(139,92,246,0.8))' },
+    stars15:  { topClass: 'case-top-silver', cardClass: 'case-card-silver', priceClass: '',        priceLabel: '15 🟡 звёзд',        glowFilter: 'drop-shadow(0 0 10px rgba(148,163,184,0.7))' },
+    stars25:  { topClass: 'case-top-silver', cardClass: 'case-card-silver', priceClass: '',        priceLabel: '25 🟡 звёзд',        glowFilter: 'drop-shadow(0 0 10px rgba(148,163,184,0.7))' },
+    stars50:  { topClass: 'case-top-silver', cardClass: 'case-card-silver', priceClass: '',        priceLabel: '50 🟡 звёзд',        glowFilter: 'drop-shadow(0 0 10px rgba(148,163,184,0.7))' },
+    stars67:  { topClass: 'case-top-epic',   cardClass: 'case-card-epic',   priceClass: 'special', priceLabel: '67 🟡 звёзд',        glowFilter: 'drop-shadow(0 0 10px rgba(239,68,68,0.8))' },
+    stars100: { topClass: 'case-top-epic',   cardClass: 'case-card-epic',   priceClass: 'special', priceLabel: '100 🟡 звёзд',       glowFilter: 'drop-shadow(0 0 10px rgba(239,68,68,0.8))' }
+};
+
+function renderCaseCards() {
+    const grid = document.querySelector('.cases-new-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const order = ['daily', 'strike', 'peace', 'stars15', 'stars25', 'stars50', 'stars67', 'stars100'];
+    order.forEach(type => {
+        const cfg = CASE_CONFIG[type];
+        const ui  = CASE_UI_CONFIG[type];
+        if (!cfg || !ui) return;
+        const svgIcon = (CASE_PIXEL_ICONS[type] || '').replace(
+            'class="case-pixel-icon"',
+            `class="case-pixel-icon" style="filter:${ui.glowFilter}"`
+        );
+        const card = document.createElement('div');
+        card.className = `case-new-card ${ui.cardClass}`;
+        card.onclick = () => selectCase(type);
+        card.innerHTML = `
+            <div class="case-new-top ${ui.topClass}">
+                ${svgIcon}
+                <div class="case-stars-num">${ui.priceLabel}</div>
+            </div>
+            <div class="case-new-info">
+                <div class="case-new-name">${cfg.name}</div>
+                <div class="case-new-price ${ui.priceClass}">${ui.priceLabel}</div>
+            </div>`;
+        grid.appendChild(card);
+    });
+}
+
 // ===== КЕЙСЫ - ПОДАРКИ С ЦЕНАМИ =====
+// CASE_GIFTS — используются в спин-анимации кейса
+// tier: rare(15-99) | epic(100-499) | legendary(500+)
 const CASE_GIFTS = [
-    { type: 'rocket',     name: 'Ракета',          emoji: '🚀', value: 50  },
-    { type: 'heart',      name: 'Сердце',           emoji: '❤️', value: 15  },
-    { type: 'bear',       name: 'Мишка',            emoji: '🐻', value: 15  },
-    { type: 'diamond',    name: 'Алмаз',            emoji: '💎', value: 50  },
-    { type: 'champagne',  name: 'Шампанское',       emoji: '🍾', value: 50  },
-    { type: 'cup',        name: 'Кубок',            emoji: '🏆', value: 100 }
+    { type: 'heart',     name: 'Сердце',           emoji: '❤️',  value: 15,  tier: 'rare',      weight: 28 },
+    { type: 'bear',      name: 'Мишка',            emoji: '🐻',  value: 15,  tier: 'rare',      weight: 25 },
+    { type: 'rose',      name: 'Роза',             emoji: '🌹',  value: 25,  tier: 'rare',      weight: 22 },
+    { type: 'gift',      name: 'Подарок',          emoji: '🎁',  value: 25,  tier: 'rare',      weight: 18 },
+    { type: 'cake',      name: 'Торт',             emoji: '🎂',  value: 100, tier: 'epic',      weight: 12 },
+    { type: 'rocket',    name: 'Ракета',           emoji: '🚀',  value: 100, tier: 'epic',      weight: 10 },
+    { type: 'champagne', name: 'Шампанское',       emoji: '🍾',  value: 100, tier: 'epic',      weight: 9  },
+    { type: 'bouquet',   name: 'Букет',            emoji: '💐',  value: 200, tier: 'epic',      weight: 6  },
+    { type: 'cup',       name: 'Кубок',            emoji: '🏆',  value: 500, tier: 'legendary', weight: 3  },
+    { type: 'ring',      name: 'Кольцо',           emoji: '💍',  value: 500, tier: 'legendary', weight: 2  },
+    { type: 'diamond',   name: 'Алмаз',            emoji: '💎',  value: 1000,tier: 'legendary', weight: 1  }
 ];
+
+function pickWeightedCaseGift() {
+    const total = CASE_GIFTS.reduce((s,g) => s + g.weight, 0);
+    let rnd = Math.random() * total;
+    for (const g of CASE_GIFTS) { rnd -= g.weight; if (rnd <= 0) return g; }
+    return CASE_GIFTS[CASE_GIFTS.length - 1];
+}
 
 let pendingCasePrize = null;
 let pendingCaseType  = null;
@@ -1472,7 +1632,7 @@ function selectCase(type) {
         selectedCaseCurrency = null;
     } else if (cfg.goldCost) {
         // peace — и серебро и золото
-        if (currDiv) currDiv.style.display = 'flex';
+        if (currDiv) { currDiv.style.display = 'flex'; currDiv.style.flexDirection = 'row'; currDiv.style.gap = '10px'; }
         selectedCaseCurrency = 'silver';
         setCaseCurrency('silver');
     } else if (cfg.allowGold) {
@@ -1487,21 +1647,24 @@ function selectCase(type) {
     // Подарки из CASE_GIFTS с процентами
     const oddsList = $id('case-odds-list');
     if (oddsList) {
-        const weights = [2, 3, 3, 2, 2, 1];
+        const weights = CASE_GIFTS.map(g => g.weight);
         const total = weights.reduce((a,b)=>a+b,0);
-        const colors = ['#a78bfa','#f87171','#fbbf24','#38bdf8','#34d399','#fcd34d'];
+        const colors = CASE_GIFTS.map(g => ({'rare':'#60a5fa','epic':'#c084fc','legendary':'#fcd34d'}[g.tier]||'#888'));
         oddsList.innerHTML = '';
         CASE_GIFTS.forEach((g, i) => {
             const pct = Math.round(weights[i]/total*100);
             const el = document.createElement('div');
             el.className = 'case-odds-item';
+            const tierColor = {'rare':'#60a5fa','epic':'#c084fc','legendary':'#fcd34d'}[g.tier] || '#888';
+            const tierLabel = {'rare':'Редкий','epic':'Эпический','legendary':'Легендарный'}[g.tier] || 'Обычный';
             el.innerHTML =
                 '<div class="case-odds-left">'
                 + '<span class="case-odds-emoji">' + g.emoji + '</span>'
-                + '<div><div class="case-odds-name">' + g.name + '</div>'
+                + '<div><div class="case-odds-name">' + g.name
+                + ' <span style="font-size:0.55rem;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.07);color:' + tierColor + ';font-weight:800;">' + tierLabel + '</span></div>'
                 + '<div class="case-odds-val">' + g.value + ' F</div></div>'
                 + '</div>'
-                + '<span class="case-odds-pct" style="color:' + colors[i] + ';">' + pct + '%</span>';
+                + '<span class="case-odds-pct" style="color:' + tierColor + ';">' + pct + '%</span>';
             oddsList.appendChild(el);
         });
     }
@@ -1670,7 +1833,7 @@ function claimCasePrize() {
 
     // Добавляем подарок в инвентарь
     if (!userData.inventory) userData.inventory = [];
-    const tier = val >= 2000 ? 'legendary' : val >= 500 ? 'rare' : val >= 100 ? 'epic' : 'common';
+    const tier = (pendingCasePrize && pendingCasePrize.tier) || (val >= 500 ? 'legendary' : val >= 100 ? 'epic' : val >= 15 ? 'rare' : 'common');
     userData.inventory.push({
         id: Date.now(),
         type: pendingCasePrize.type,
@@ -2306,17 +2469,22 @@ async function syncGoldFromServer() {
     try {
         const userId = tg?.initDataUnsafe?.user?.id;
         if (!userId) return;
-        const resp = await fetch(BACKEND_URL + '/balance?user_id=' + userId + '&init_data=' + encodeURIComponent(tg?.initData||''));
+        const resp = await fetch(BACKEND_URL + '/balance?user_id=' + userId);
         if (!resp.ok) return;
         const data = await resp.json();
         const serverGold = parseInt(data.gold_coins) || 0;
-        // Обновляем только если сервер вернул больше (никогда не обнуляем локальный баланс)
-        if (serverGold > (userData.balance.gold || 0)) {
-            userData.balance.gold = serverGold;
+        const serverSilver = parseInt(data.silver_coins) || 0;
+        let changed = false;
+        // Золото — берём максимум из сервера и локального (сервер авторитетен для gold)
+        if (serverGold > 0 || userData.balance.gold === 0) {
+            if (serverGold !== userData.balance.gold) {
+                userData.balance.gold = Math.max(serverGold, userData.balance.gold);
+                changed = true;
+            }
+        }
+        if (changed) {
             saveUserData();
             updateBalance();
-            const el = document.getElementById('cases-gold-val');
-            if (el) el.textContent = serverGold;
         }
     } catch(e) { /* сервер недоступен — используем локальный баланс */ }
 }
@@ -2363,30 +2531,29 @@ async function buyStarPackage(stars, coins) {
         }
         tg.openInvoice(data.invoice_url, async (status) => {
             if (status === 'paid') {
-                // Сервер начислил через successful_payment — синхронизируем с сервера
-                showNotif('⭐ Оплата прошла! Обновляем баланс…', '#a78bfa');
-                try {
-                    let synced = false;
-                    for (let attempt = 0; attempt < 8; attempt++) {
-                        await new Promise(r => setTimeout(r, 1500));
+                showNotif('⭐ Оплата прошла! Синхронизируем баланс…', '#a78bfa');
+                closeTopUpModal();
+                let synced = false;
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    await new Promise(r => setTimeout(r, 1800));
+                    try {
                         const br = await fetch(BACKEND_URL + '/balance?user_id=' + userId);
+                        if (!br.ok) continue;
                         const bd = await br.json();
-                        const serverGold = bd.gold_coins ?? 0;
-                        if (serverGold > userData.balance.gold) {
-                            const gained = serverGold - userData.balance.gold;
+                        const serverGold = parseInt(bd.gold_coins) || 0;
+                        if (serverGold > (userData.balance.gold || 0)) {
+                            const gained = serverGold - (userData.balance.gold || 0);
                             userData.balance.gold = serverGold;
-                            saveUserData(); updateBalance(); closeTopUpModal();
+                            saveUserData(); updateBalance();
                             trackDeposit(gained);
                             showTopUpSuccess(gained, stars, 'stars');
                             synced = true;
                             break;
                         }
-                    }
-                    if (!synced) {
-                        // Fallback: зачисляем локально
-                        creditCoins(coins, stars);
-                    }
-                } catch(e) {
+                    } catch(e) {}
+                }
+                if (!synced) {
+                    // Fallback: зачисляем локально если сервер не ответил
                     creditCoins(coins, stars);
                 }
             } else if (status === 'cancelled') {
