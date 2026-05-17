@@ -14,12 +14,10 @@ from telegram.ext import (
 )
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-BOT_TOKEN      = os.environ.get("BOT_TOKEN", "8700173300:AAFguL_dEKOSUvOep_7iK1MIaiTaaFex2bg")
-ADMIN_USERNAME  = os.environ.get("ADMIN_USERNAME",  "m16el1n0")
-ADMIN_USERNAME2 = os.environ.get("ADMIN_USERNAME2", "FleepTg")
-ADMIN_USERNAMES = {ADMIN_USERNAME.lower(), ADMIN_USERNAME2.lower()}
+BOT_TOKEN      = "8700173300:AAFguL_dEKOSUvOep_7iK1MIaiTaaFex2bg"
+ADMIN_USERNAME = "m16el1n0"
 ADMIN_SECRET   = "fleep_admin_2026"  # секрет для /admin/stats
-WEB_APP_URL    = os.environ.get("WEB_APP_URL", "https://t.me/fleep_gift_bot/GAME")
+WEB_APP_URL    = "https://t.me/fleep_gift_bot/GAME"
 DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 
 # ─── ПРОМОКОДЫ ────────────────────────────────────────────────────────────────
@@ -46,7 +44,9 @@ PORT = int(os.environ.get("PORT", 0))
     WAIT_GIFT_COST,
     WAIT_GIFT_COINS,
     WAIT_GIFT_PHOTO,
-) = range(11)
+    WAIT_REF_USER,
+    WAIT_REF_PERCENT,
+) = range(13)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -872,7 +872,7 @@ _gift_draft = {}   # временное хранилище пока не сох�
 async def receive_gift_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем название подарка"""
     user = update.effective_user
-    if (user.username or "").lower() not in ADMIN_USERNAMES:
+    if user.username != ADMIN_USERNAME:
         return ConversationHandler.END
     name = update.message.text.strip()
     gift_type = re.sub(r"[^a-z0-9_]", "", name.lower().replace(" ", "_"))[:20]
@@ -889,7 +889,7 @@ async def receive_gift_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def receive_gift_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем стоимость в звёздах"""
     user = update.effective_user
-    if (user.username or "").lower() not in ADMIN_USERNAMES:
+    if user.username != ADMIN_USERNAME:
         return ConversationHandler.END
     try:
         stars = int(update.message.text.strip())
@@ -915,7 +915,7 @@ async def receive_gift_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def receive_gift_coins(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем диапазон монет"""
     user = update.effective_user
-    if (user.username or "").lower() not in ADMIN_USERNAMES:
+    if user.username != ADMIN_USERNAME:
         return ConversationHandler.END
     try:
         parts = update.message.text.strip().split()
@@ -941,7 +941,7 @@ async def receive_gift_coins(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def receive_gift_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем фото или /skip"""
     user = update.effective_user
-    if (user.username or "").lower() not in ADMIN_USERNAMES:
+    if user.username != ADMIN_USERNAME:
         return ConversationHandler.END
     draft = _gift_draft.get(user.id, {})
     if not draft:
@@ -983,7 +983,7 @@ async def receive_gift_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if (user.username or "").lower() not in ADMIN_USERNAMES:
+    if user.username != ADMIN_USERNAME:
         await update.message.reply_text("⛔ Доступ запрещён.")
         return ConversationHandler.END
     total = count_users()
@@ -1283,18 +1283,16 @@ async def run():
 
     # Рассылка + пополнение баланса
     admin_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("admin", admin),
-            CallbackQueryHandler(admin_menu_choice, pattern=r"^adm_"),
-        ],
+        entry_points=[CommandHandler("admin", admin)],
         states={
             WAIT_BROADCAST_TEXT: [
+                CallbackQueryHandler(admin_menu_choice, pattern=r"^adm_(broadcast|addbal|stats|gifts|gift_del_.+)$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_text),
             ],
             WAIT_BROADCAST_BTN:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_btn)],
             WAIT_ADDBAL_USER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, addbal_receive_user)],
             WAIT_ADDBAL_AMOUNT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, addbal_receive_amount)],
-            WAIT_ADDBAL_TYPE:    [CallbackQueryHandler(addbal_confirm_type, pattern=r"^addbal_")],
+            WAIT_ADDBAL_TYPE:    [CallbackQueryHandler(addbal_confirm_type, pattern=r"^addbal_(gold|silver|both)$")],
             WAIT_GIFT_NAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_name)],
             WAIT_GIFT_COST:  [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_cost)],
             WAIT_GIFT_COINS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_coins)],
@@ -1303,17 +1301,11 @@ async def run():
                 CommandHandler("skip", receive_gift_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_gift_photo),
             ],
-            WAIT_REF_USER:    [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_ref_user)],
-            WAIT_REF_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_ref_percent)],
         },
         fallbacks=[CommandHandler("cancel", broadcast_cancel)],
         per_message=False,
-        allow_reentry=True,
     )
     app.add_handler(admin_conv)
-    # Глобальные handlers — работают ВСЕГДА вне зависимости от состояния
-    app.add_handler(CallbackQueryHandler(admin_menu_choice,  pattern=r"^adm_"))
-    app.add_handler(CallbackQueryHandler(addbal_confirm_type, pattern=r"^addbal_"))
 
     logger.info("Бот запускается…")
     async with app:
