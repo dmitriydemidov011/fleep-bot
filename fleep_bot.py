@@ -13,25 +13,21 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
 BOT_TOKEN      = "8700173300:AAFguL_dEKOSUvOep_7iK1MIaiTaaFex2bg"
 ADMIN_USERNAME = "m16el1n0"
-ADMIN_SECRET   = "fleep_admin_2026"  # секрет для /admin/stats
+ADMIN_SECRET   = "fleep_admin_2026"
 WEB_APP_URL    = "https://t.me/fleep_gift_bot/GAME"
 DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.db")
 
-# ─── ПРОМОКОДЫ ────────────────────────────────────────────────────────────────
 PROMO_CODES = {
-    "VESNA26": 0.20,   # +20%
+    "VESNA26": 0.20,
 }
 
 MIN_STARS = 1
 MAX_STARS = 10000
 
-# Railway/Render выставляют PORT сами, локально не используется
 PORT = int(os.environ.get("PORT", 0))
 
-# ─── CONVERSATION STATES ──────────────────────────────────────────────────────
 (
     WAIT_BROADCAST_TEXT,
     WAIT_BROADCAST_BTN,
@@ -51,8 +47,6 @@ PORT = int(os.environ.get("PORT", 0))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-# ─── DATABASE ─────────────────────────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
@@ -99,7 +93,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def add_custom_gift(name: str, gift_type: str, star_cost: int,
                     min_coins: int, max_coins: int, weight: int = 10,
                     photo_id: str = None) -> int:
@@ -124,7 +117,6 @@ def add_custom_gift(name: str, gift_type: str, star_cost: int,
     conn.close()
     return gift_id
 
-
 def get_custom_gifts(active_only: bool = True) -> list:
     """Возвращает список кастомных подарков."""
     conn = sqlite3.connect(DB_PATH)
@@ -136,14 +128,12 @@ def get_custom_gifts(active_only: bool = True) -> list:
     conn.close()
     return rows
 
-
 def delete_custom_gift(gift_id: int):
     """Деактивирует (мягкое удаление) кастомный подарок."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute("UPDATE custom_gifts SET active=0 WHERE id=?", (gift_id,))
     conn.commit()
     conn.close()
-
 
 def record_transaction(user_id: int, username: str, full_name: str,
                        ttype: str, method: str, amount: int, currency: str = "gold"):
@@ -154,7 +144,6 @@ def record_transaction(user_id: int, username: str, full_name: str,
     )
     conn.commit()
     conn.close()
-
 
 def get_transaction_stats():
     """Returns dict with total deposits and withdrawals"""
@@ -173,7 +162,6 @@ def get_transaction_stats():
     conn.close()
     return {"summary": rows, "recent": recent}
 
-
 def save_user(user):
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
@@ -187,13 +175,11 @@ def save_user(user):
     conn.commit()
     conn.close()
 
-
 def get_gold(user_id: int) -> int:
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute("SELECT gold_coins FROM users WHERE user_id=?", (user_id,)).fetchone()
     conn.close()
     return row[0] if row else 0
-
 
 def add_gold(user_id: int, amount: int):
     conn = sqlite3.connect(DB_PATH)
@@ -208,7 +194,6 @@ def add_gold(user_id: int, amount: int):
     conn.commit()
     conn.close()
 
-
 def add_silver(user_id: int, amount: int):
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
@@ -222,12 +207,10 @@ def add_silver(user_id: int, amount: int):
     conn.commit()
     conn.close()
 
-
 def find_user_by_username(query: str):
     """Ищет по username (с @ или без) или по user_id (число). Возвращает (user_id, username, full_name) или None"""
     query = query.strip().lstrip("@")
     conn = sqlite3.connect(DB_PATH)
-    # Попытка найти по числовому user_id
     if query.isdigit():
         row = conn.execute(
             "SELECT user_id, username, full_name FROM users WHERE user_id=?",
@@ -236,14 +219,12 @@ def find_user_by_username(query: str):
         if row:
             conn.close()
             return row
-    # Поиск по username (без учёта регистра)
     row = conn.execute(
         "SELECT user_id, username, full_name FROM users WHERE LOWER(username)=LOWER(?)",
         (query,)
     ).fetchone()
     conn.close()
     return row
-
 
 def get_balance(user_id: int):
     conn = sqlite3.connect(DB_PATH)
@@ -253,13 +234,11 @@ def get_balance(user_id: int):
     conn.close()
     return (row[0], row[1]) if row else (0, 0)
 
-
 def get_all_users():
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute("SELECT user_id FROM users").fetchall()
     conn.close()
     return [r[0] for r in rows]
-
 
 def count_users():
     conn = sqlite3.connect(DB_PATH)
@@ -267,18 +246,14 @@ def count_users():
     conn.close()
     return n
 
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
 def make_even(n: int) -> int:
     return n if n % 2 == 0 else n + 1
-
 
 def calc_coins(stars: int, promo: str | None) -> int:
     if promo and promo.upper() in PROMO_CODES:
         coins = int(stars * (1 + PROMO_CODES[promo.upper()]))
         return make_even(coins)
     return stars
-
 
 async def do_send_invoice(bot, chat_id: int, user_id: int, stars: int, promo: str | None):
     promo_valid = promo and promo in PROMO_CODES
@@ -301,8 +276,6 @@ async def do_send_invoice(bot, chat_id: int, user_id: int, stars: int, promo: st
         prices=[LabeledPrice("Звёзды Telegram", stars)],
     )
 
-
-# ─── ВЕРИФИКАЦИЯ TELEGRAM initData ───────────────────────────────────────────
 def verify_init_data(init_data: str) -> bool:
     try:
         pairs, hash_val = {}, None
@@ -323,15 +296,12 @@ def verify_init_data(init_data: str) -> bool:
     except Exception:
         return False
 
-
 CORS = {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
 
-
-# ─── HTTP: GET /balance ───────────────────────────────────────────────────────
 async def http_balance(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
@@ -342,18 +312,14 @@ async def http_balance(request: web.Request) -> web.Response:
     if not user_id:
         return web.json_response({"error": "no user_id"}, status=400, headers=CORS)
 
-    # Allow polling without init_data (post-payment balance checks)
-    # Only enforce strict auth when init_data is provided and non-empty
     if init_data and not verify_init_data(init_data):
         return web.json_response({"error": "unauthorized"}, status=403, headers=CORS)
 
     gold, silver = get_balance(int(user_id))
     return web.json_response({"gold_coins": gold, "silver_coins": silver}, headers=CORS)
 
-
 async def http_health(request: web.Request) -> web.Response:
     return web.Response(text="OK")
-
 
 async def http_create_invoice(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
@@ -369,7 +335,6 @@ async def http_create_invoice(request: web.Request) -> web.Response:
         final_coins = calc_coins(stars, promo)
         payload     = f"stars_{stars}_{final_coins}_{user_id}"
         logger.info(f"Creating invoice: user={user_id} stars={stars} coins={final_coins}")
-        # Прямой вызов Telegram API — работает со всеми версиями PTB
         async with aiohttp.ClientSession() as _sess:
             async with _sess.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/createInvoiceLink",
@@ -392,18 +357,15 @@ async def http_create_invoice(request: web.Request) -> web.Response:
         logger.error(f"create_invoice error: {type(e).__name__}: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
 
-
 async def http_admin_stats(request: web.Request) -> web.Response:
     """Статистика пополнений и выводов для /admin"""
     if request.method == "OPTIONS":
         return web.Response(status=204, headers=CORS)
-    # Simple auth via secret header or param
     secret = request.rel_url.query.get("secret", "")
     if secret != ADMIN_SECRET:
         return web.json_response({"error": "unauthorized"}, status=403, headers=CORS)
     stats = get_transaction_stats()
     return web.json_response(stats, headers=CORS)
-
 
 async def http_admin_panel(request: web.Request) -> web.Response:
     """HTML админ-панель со статистикой пополнений и выводов"""
@@ -443,18 +405,18 @@ async def http_admin_panel(request: web.Request) -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FLEEP GIFT — Админ</title>
 <style>
-  body{{margin:0;font-family:system-ui,sans-serif;background:#0a0a12;color:#e2e8f0;padding:20px}}
-  h1{{color:#a78bfa;margin-bottom:20px;font-size:1.4rem}}
+  body{{margin:0;font-family:system-ui,sans-serif;background:
+  h1{{color:
   .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px}}
-  .card{{background:#13131f;border:1.5px solid rgba(123,92,255,0.2);border-radius:14px;padding:18px}}
-  .card-val{{font-size:1.8rem;font-weight:900;color:#a78bfa}}
-  .card-lbl{{font-size:0.72rem;color:#555;margin-top:4px;text-transform:uppercase;letter-spacing:1px}}
-  table{{width:100%;border-collapse:collapse;background:#13131f;border-radius:14px;overflow:hidden}}
-  th{{background:rgba(123,92,255,0.15);padding:10px 12px;text-align:left;font-size:0.75rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px}}
+  .card{{background:
+  .card-val{{font-size:1.8rem;font-weight:900;color:
+  .card-lbl{{font-size:0.72rem;color:
+  table{{width:100%;border-collapse:collapse;background:
+  th{{background:rgba(123,92,255,0.15);padding:10px 12px;text-align:left;font-size:0.75rem;color:
   td{{padding:10px 12px;font-size:0.8rem;border-bottom:1px solid rgba(255,255,255,0.04)}}
   tr:last-child td{{border-bottom:none}}
   tr:hover td{{background:rgba(255,255,255,0.02)}}
-  h2{{color:#7b5cff;font-size:1rem;margin:24px 0 12px;text-transform:uppercase;letter-spacing:2px}}
+  h2{{color:
 </style>
 </head>
 <body>
@@ -475,12 +437,10 @@ async def http_admin_panel(request: web.Request) -> web.Response:
 </html>"""
     return web.Response(text=html_page, content_type="text/html")
 
-
 async def http_get_gifts(request: web.Request) -> web.Response:
     """GET /gifts — список активных подарков для фронтенда"""
     gifts = get_gifts_for_api()
     return web.json_response({"gifts": gifts}, headers=CORS)
-
 
 async def http_withdraw_gift(request: web.Request) -> web.Response:
     """Запрос на вывод подарка из инвентаря"""
@@ -498,10 +458,8 @@ async def http_withdraw_gift(request: web.Request) -> web.Response:
         if not user_id:
             return web.json_response({"error": "no user_id"}, status=400, headers=CORS)
 
-        # Записываем транзакцию
         record_transaction(user_id, username, "", "withdrawal", "gift", gift_value, "gift")
 
-        # Уведомляем администратора
         bot = request.app.get("bot")
         if bot:
             try:
@@ -514,7 +472,6 @@ async def http_withdraw_gift(request: web.Request) -> web.Response:
                     f"💰 Стоимость: *{gift_value} F*\n\n"
                     f"Подарок нужно отправить в Telegram!"
                 )
-                # Найдём username администратора через переменную
                 conn = __import__("sqlite3").connect(DB_PATH)
                 admin_row = conn.execute(
                     "SELECT user_id FROM users WHERE username=?", (ADMIN_USERNAME,)
@@ -531,15 +488,9 @@ async def http_withdraw_gift(request: web.Request) -> web.Response:
         logger.error(f"withdraw_gift error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
 
-
-
-
-
-# ─── CRYPTOBOT WEBHOOK ────────────────────────────────────────────────────────
 CRYPTOBOT_TOKEN = "542304:AAyfVT4SyISn08Y0GY8WcJPpDGP8TqZXUW3"
 CRYPTOBOT_API   = "https://pay.crypt.bot/api"
-COINS_PER_USDT  = 66.67  # 100 coins = 1.5 USDT
-
+COINS_PER_USDT  = 66.67
 
 async def http_create_usdt_invoice(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
@@ -567,8 +518,6 @@ async def http_create_usdt_invoice(request: web.Request) -> web.Response:
         if not result.get("ok"):
             raise Exception(result.get("error", {}).get("name", "Unknown error"))
         invoice = result["result"]
-        # pay_url = https://t.me/CryptoBot?start=IV... (открывается через openTelegramLink)
-        # bot_invoice_url = https://t.me/$CryptoBot?start=IV... (тоже подходит)
         pay_link = invoice.get("bot_invoice_url") or invoice.get("pay_url", "")
         return web.json_response({
             "wallet":      pay_link,
@@ -579,7 +528,6 @@ async def http_create_usdt_invoice(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error(f"create_usdt_invoice error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=CORS)
-
 
 async def http_cryptobot_webhook(request: web.Request) -> web.Response:
     if request.method == "OPTIONS":
@@ -627,8 +575,6 @@ async def start_http(application):
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     logger.info(f"HTTP server on port {PORT}")
 
-
-# ─── /start ───────────────────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
@@ -642,8 +588,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
-# ─── /balance ─────────────────────────────────────────────────────────────────
 async def balance_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     save_user(user)
@@ -653,8 +597,6 @@ async def balance_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
-# ─── /topup — точка входа ─────────────────────────────────────────────────────
 async def topup_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """
     /topup              -> меню
@@ -689,7 +631,6 @@ async def topup_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await do_send_invoice(ctx.bot, update.effective_chat.id, user.id, stars, promo)
         return ConversationHandler.END
 
-    # Меню с кнопками
     keyboard = [
         [
             InlineKeyboardButton("🌱 50 ⭐",   callback_data="tq_50"),
@@ -713,8 +654,6 @@ async def topup_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_TOPUP_AMOUNT
 
-
-# ─── Кнопки быстрого выбора ───────────────────────────────────────────────────
 async def topup_quick(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -740,8 +679,6 @@ async def topup_quick(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_TOPUP_PROMO
 
-
-# ─── Ввод своей суммы ─────────────────────────────────────────────────────────
 async def topup_receive_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         stars = int(update.message.text.strip())
@@ -767,8 +704,6 @@ async def topup_receive_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_TOPUP_PROMO
 
-
-# ─── Промокод: выбор ──────────────────────────────────────────────────────────
 async def topup_promo_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -782,8 +717,6 @@ async def topup_promo_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("🎟 Введи промокод:")
     return WAIT_TOPUP_PROMO
 
-
-# ─── Промокод: текст ──────────────────────────────────────────────────────────
 async def topup_receive_promo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user  = update.effective_user
     stars = ctx.user_data.get("topup_stars", 0)
@@ -801,13 +734,10 @@ async def topup_receive_promo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await do_send_invoice(ctx.bot, update.effective_chat.id, user.id, stars, promo)
     return ConversationHandler.END
 
-
 async def topup_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отменено.")
     return ConversationHandler.END
 
-
-# ─── PRE-CHECKOUT ─────────────────────────────────────────────────────────────
 async def pre_checkout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     logger.info(f"PreCheckout: user={query.from_user.id} payload={query.invoice_payload}")
@@ -819,8 +749,6 @@ async def pre_checkout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer(ok=False, error_message="Неверный запрос. Попробуй ещё раз.")
         logger.warning(f"PreCheckout REJECTED: {query.invoice_payload}")
 
-
-# ─── SUCCESSFUL PAYMENT ───────────────────────────────────────────────────────
 async def successful_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     payment = update.message.successful_payment
     user    = update.effective_user
@@ -828,14 +756,12 @@ async def successful_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     try:
         parts = payment.invoice_payload.split("_")
-        # payload: stars_{stars}_{coins}_{user_id}
         if len(parts) != 4 or parts[0] != "stars":
             raise ValueError(f"Bad payload format: {payment.invoice_payload}")
         stars = int(parts[1])
         coins = int(parts[2])
     except Exception as e:
         logger.error(f"Cannot parse payload: {payment.invoice_payload} — {e}")
-        # Начисляем по факту оплаченных звёзд если payload сломан
         stars = payment.total_amount
         coins = stars
         logger.info(f"Fallback: crediting {coins} coins by total_amount")
@@ -846,7 +772,6 @@ async def successful_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     record_transaction(user.id, user.username or "", user.full_name or "",
                        "deposit", "stars", coins, "gold")
 
-    # Передаём баланс через startapp deeplink — WebApp читает параметр и обновляет баланс
     bot_username = (await ctx.bot.get_me()).username
     game_link = f"https://t.me/{bot_username}/GAME?startapp=gold_{new_balance}"
 
@@ -862,12 +787,7 @@ async def successful_payment(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ]])
     )
 
-
-# ─── /admin ───────────────────────────────────────────────────────────────────
-
-# ─── ADMIN: добавление подарка ──────────────────────────────────────────────
-
-_gift_draft = {}   # временное хранилище пока не сохранили
+_gift_draft = {}
 
 async def receive_gift_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем название подарка"""
@@ -885,7 +805,6 @@ async def receive_gift_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_GIFT_COST
 
-
 async def receive_gift_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем стоимость в звёздах"""
     user = update.effective_user
@@ -898,7 +817,6 @@ async def receive_gift_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Введи число от 1 до 10000")
         return WAIT_GIFT_COST
     _gift_draft[user.id]["star_cost"] = stars
-    # Авто-расчёт монет: min = stars, max = stars * 4
     auto_min = stars
     auto_max = stars * 4
     await update.message.reply_text(
@@ -910,7 +828,6 @@ async def receive_gift_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return WAIT_GIFT_COINS
-
 
 async def receive_gift_coins(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем диапазон монет"""
@@ -936,7 +853,6 @@ async def receive_gift_coins(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return WAIT_GIFT_PHOTO
-
 
 async def receive_gift_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Получаем фото или /skip"""
@@ -980,7 +896,6 @@ async def receive_gift_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-
 async def admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.username != ADMIN_USERNAME:
@@ -989,7 +904,6 @@ async def admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = count_users()
     stats = get_transaction_stats()
 
-    # Build summary text
     dep_stars, dep_usdt, dep_total = 0, 0, 0
     for row in stats["summary"]:
         ttype, method, amount, count = row
@@ -1029,7 +943,6 @@ async def admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return WAIT_BROADCAST_TEXT
-
 
 async def admin_menu_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1083,7 +996,6 @@ async def admin_menu_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return WAIT_BROADCAST_TEXT
 
     if query.data == "adm_gifts":
-        # Показываем список существующих кастомных подарков
         existing = get_custom_gifts(active_only=True)
         lines = ["🎁 *Управление подарками*\n"]
         buttons = []
@@ -1117,8 +1029,6 @@ async def admin_menu_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     return WAIT_BROADCAST_TEXT
 
-
-# ─── ПОПОЛНЕНИЕ БАЛАНСА ПОЛЬЗОВАТЕЛЮ ─────────────────────────────────────────
 async def addbal_receive_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip()
     row = find_user_by_username(username)
@@ -1144,7 +1054,6 @@ async def addbal_receive_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_ADDBAL_AMOUNT
 
-
 async def addbal_receive_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         amount = int(update.message.text.strip())
@@ -1169,7 +1078,6 @@ async def addbal_receive_amount(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_ADDBAL_TYPE
 
-
 async def addbal_confirm_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1177,7 +1085,7 @@ async def addbal_confirm_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id  = ctx.user_data["addbal_user_id"]
     username = ctx.user_data["addbal_username"]
     amount   = ctx.user_data["addbal_amount"]
-    coin_type = query.data  # addbal_gold / addbal_silver / addbal_both
+    coin_type = query.data
 
     if coin_type == "addbal_gold":
         add_gold(user_id, amount)
@@ -1200,7 +1108,6 @@ async def addbal_confirm_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    # Уведомляем самого пользователя
     try:
         await ctx.bot.send_message(
             chat_id=user_id,
@@ -1215,12 +1122,10 @@ async def addbal_confirm_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
 async def receive_broadcast_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["broadcast_text"] = update.message.text
     await update.message.reply_text("✅ Текст сохранён.\n\nВведи *подпись кнопки*:", parse_mode="Markdown")
     return WAIT_BROADCAST_BTN
-
 
 async def receive_broadcast_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     label = update.message.text
@@ -1241,13 +1146,10 @@ async def receive_broadcast_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-
 async def broadcast_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Рассылка отменена.")
     return ConversationHandler.END
 
-
-# ─── MAIN ─────────────────────────────────────────────────────────────────────
 async def run():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
@@ -1255,16 +1157,13 @@ async def run():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance_cmd))
 
-    # Диалог пополнения
     topup_conv = ConversationHandler(
         entry_points=[
             CommandHandler("topup", topup_start),
         ],
         states={
             WAIT_TOPUP_AMOUNT: [
-                # Кнопки быстрого выбора пакета
                 CallbackQueryHandler(topup_quick, pattern=r"^tq_(50|100|250|500|1000|custom)$"),
-                # Текстовый ввод своей суммы
                 MessageHandler(filters.TEXT & ~filters.COMMAND, topup_receive_amount),
             ],
             WAIT_TOPUP_PROMO: [
@@ -1275,13 +1174,11 @@ async def run():
         fallbacks=[CommandHandler("cancel", topup_cancel)],
         per_message=False,
     )
-    # ⚠️ Платежи регистрируем ДО ConversationHandler'ов — иначе могут перехватываться
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
     app.add_handler(topup_conv)
 
-    # Рассылка + пополнение баланса
     admin_conv = ConversationHandler(
         entry_points=[CommandHandler("admin", admin)],
         states={
@@ -1311,17 +1208,14 @@ async def run():
     async with app:
         await app.initialize()
         await app.start()
-        # Запускаем HTTP ПОСЛЕ инициализации бота — иначе create_invoice_link упадёт
         if PORT:
             await start_http(app)
         logger.info("Бот и HTTP запущены!")
         await app.updater.start_polling()
         await asyncio.Event().wait()
 
-
 def main():
     asyncio.run(run())
-
 
 if __name__ == "__main__":
     main()
